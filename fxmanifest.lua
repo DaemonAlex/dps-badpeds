@@ -3,7 +3,7 @@ game       'gta5'
 lua54      'yes'
 author     'DPS Development'
 description 'Police NPC Interaction System with Intel Trading and Jail System'
-version    '2.1.1'
+version    '2.1.2'
 
 -- Dependencies
 -- Required: qbx_core, ox_lib, ox_target, ox_inventory, oxmysql

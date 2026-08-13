@@ -20,7 +20,7 @@ SharedCharacters = SharedCharacters or {}
 
 SharedCharacters.pool = {
     -- ==========================================================================
-    -- ROXWOOD / NORTH COUNTY (10 characters)
+    -- BLAINE COUNTY / NORTH (10 characters)
     -- ==========================================================================
     {
         -- Identity (both scripts)
@@ -32,18 +32,18 @@ SharedCharacters.pool = {
         -- Police interaction data (dps-badpeds)
         personality = "paranoid",
         specialty = "drugs",
-        backstory = "Meth cook hiding in the caves around Roxwood State Park. Ex-chemistry student gone bad.",
+        backstory = "Meth cook hiding out in the Grand Senora Desert. Ex-chemistry student gone bad.",
         illegalChance = 90,
 
         -- AI NPC data (dps-ainpcs)
         model = "a_m_y_stwhi_02",
-        homeLocation = vector4(-1472.68, 7649.27, 88.39, 150.8),
+        homeLocation = vector4(1391.2, 3599.8, 38.9, 200.0),
         movement = { pattern = "stationary", radius = 0.0 },
         schedule = { { time = {22, 6}, active = true } },
         role = "meth_cook",
         trustCategory = "criminal",
         voice = "paranoid",
-        systemPrompt = [[You are Jake Morrison, a paranoid meth cook hiding in the caves near Roxwood State Park. You're constantly worried about getting caught. You were a chemistry student before dropping out. You're secretive about your operation but might share info if you think it helps you avoid trouble.]],
+        systemPrompt = [[You are Jake Morrison, a paranoid meth cook hiding out in the Grand Senora Desert. You're constantly worried about getting caught. You were a chemistry student before dropping out. You're secretive about your operation but might share info if you think it helps you avoid trouble.]],
         intel = {
             { tier = "rumors", topics = {"meth_labs", "drug_spots"}, trustRequired = 0 },
             { tier = "basic", topics = {"suppliers", "distribution"}, trustRequired = 20 },
@@ -66,13 +66,13 @@ SharedCharacters.pool = {
         illegalChance = 85,
 
         model = "a_m_m_hillbilly_02",
-        homeLocation = vector4(-1799.31, 8375.83, 36.23, 214.0),
+        homeLocation = vector4(1701.2, 3763.9, 34.7, 40.0),
         movement = { pattern = "wander", radius = 30.0 },
         schedule = { { time = {10, 22}, active = true } },
         role = "gun_runner",
         trustCategory = "criminal",
         voice = "calm",
-        systemPrompt = [[You are Dusty Miller, a calm and collected gun runner in the Roxwood area. Former military, you know your weapons inside and out. You operate near the Ammunation and have connections for anything military grade. You're careful about who you deal with.]],
+        systemPrompt = [[You are Dusty Miller, a calm and collected gun runner in the Sandy Shores area. Former military, you know your weapons inside and out. You operate near the Ammunation and have connections for anything military grade. You're careful about who you deal with.]],
         intel = {
             { tier = "rumors", topics = {"gun_deals", "weapons"}, trustRequired = 0 },
             { tier = "basic", topics = {"arms_shipments"}, trustRequired = 30 },
@@ -91,17 +91,17 @@ SharedCharacters.pool = {
 
         personality = "cunning",
         specialty = "theft",
-        backstory = "Fence operating out of the Juniper pawn shop. Knows what everything is worth.",
+        backstory = "Fence operating out of the Sandy Shores pawn shop. Knows what everything is worth.",
         illegalChance = 70,
 
         model = "a_f_m_fatwhite_01",
-        homeLocation = vector4(-3101.44, 6202.44, 14.98, 95.87),
+        homeLocation = vector4(1966.0, 3743.0, 32.3, 120.0),
         movement = { pattern = "stationary", radius = 10.0 },
         schedule = { { time = {8, 20}, active = true } },
         role = "fence",
         trustCategory = "criminal",
         voice = "smooth",
-        systemPrompt = [[You are Brenda Cole, a cunning fence who runs goods through the pawn shop in Juniper. You know the value of everything and can move stolen goods quickly. You're shrewd in negotiations and always looking for the next score.]],
+        systemPrompt = [[You are Brenda Cole, a cunning fence who runs goods through the pawn shop in Sandy Shores. You know the value of everything and can move stolen goods quickly. You're shrewd in negotiations and always looking for the next score.]],
         intel = {
             { tier = "rumors", topics = {"stolen_goods", "burglaries"}, trustRequired = 0 },
             { tier = "basic", topics = {"big_scores", "theft_rings"}, trustRequired = 25 },
@@ -119,17 +119,17 @@ SharedCharacters.pool = {
 
         personality = "nervous",
         specialty = "drugs",
-        backstory = "Small-time dealer working the 24/7 in Roxwood. Always looking over his shoulder.",
+        backstory = "Small-time dealer working the 24/7 in Sandy Shores. Always looking over his shoulder.",
         illegalChance = 75,
 
         model = "a_m_y_vindouche_01",
-        homeLocation = vector4(-381.29, 7205.64, 18.22, 0.06),
+        homeLocation = vector4(1959.0, 3741.0, 32.3, 300.0),
         movement = { pattern = "wander", radius = 40.0 },
         schedule = { { time = {18, 4}, active = true } },
         role = "street_dealer",
         trustCategory = "criminal",
         voice = "anxious",
-        systemPrompt = [[You are Ricky Tran, a nervous small-time drug dealer who works around the 24/7 in Roxwood. You're always jumpy and paranoid about cops. You'll talk to avoid trouble but you're not very reliable with information.]],
+        systemPrompt = [[You are Ricky Tran, a nervous small-time drug dealer who works around the 24/7 in Sandy Shores. You're always jumpy and paranoid about cops. You'll talk to avoid trouble but you're not very reliable with information.]],
         intel = {
             { tier = "rumors", topics = {"drug_spots", "local_dealers"}, trustRequired = 0 },
             { tier = "basic", topics = {"suppliers"}, trustRequired = 15 },
@@ -151,7 +151,7 @@ SharedCharacters.pool = {
         illegalChance = 60,
 
         model = "a_m_y_stwhi_01",
-        homeLocation = vector4(-1228.24, 6928.06, 20.48, 255.6),
+        homeLocation = vector4(1163.4, 2708.0, 38.2, 180.0),
         movement = { pattern = "wander", radius = 50.0 },
         schedule = { { time = {0, 24}, active = true } },
         role = "petty_criminal",
@@ -178,7 +178,7 @@ SharedCharacters.pool = {
         illegalChance = 40,
 
         model = "a_m_m_farmer_01",
-        homeLocation = vector4(-345.47, 7164.54, 6.40, 192.5),
+        homeLocation = vector4(1698.0, 3785.0, 34.7, 220.0),
         movement = { pattern = "stationary", radius = 15.0 },
         schedule = { { time = {6, 18}, active = true } },
         role = "informant",
@@ -207,7 +207,7 @@ SharedCharacters.pool = {
         illegalChance = 65,
 
         model = "a_f_y_hipster_02",
-        homeLocation = vector4(-614.47, 7016.49, 24.30, 52.05),
+        homeLocation = vector4(1986.8, 3053.6, 47.2, 250.0),
         movement = { pattern = "wander", radius = 30.0 },
         schedule = { { time = {20, 4}, active = true } },
         role = "pickpocket",
@@ -235,7 +235,7 @@ SharedCharacters.pool = {
         illegalChance = 70,
 
         model = "a_m_m_hillbilly_01",
-        homeLocation = vector4(25.93, 7861.81, 6.40, 191.6),
+        homeLocation = vector4(1849.0, 3689.0, 34.3, 120.0),
         movement = { pattern = "wander", radius = 40.0 },
         schedule = { { time = {6, 20}, active = true } },
         role = "moonshiner",
@@ -259,17 +259,17 @@ SharedCharacters.pool = {
 
         personality = "quiet",
         specialty = "drugs",
-        backstory = "Drug mule staying at the Lodging Inn in Juniper. Moves product between suppliers.",
+        backstory = "Drug mule staying at the motel off Route 68. Moves product between suppliers.",
         illegalChance = 80,
 
         model = "a_f_y_tourist_01",
-        homeLocation = vector4(-3006.73, 6244.67, 11.99, 102.1),
+        homeLocation = vector4(1136.0, 2660.0, 37.9, 180.0),
         movement = { pattern = "wander", radius = 20.0 },
         schedule = { { time = {8, 22}, active = true } },
         role = "drug_mule",
         trustCategory = "criminal",
         voice = "reserved",
-        systemPrompt = [[You are Wendy Price, a quiet drug mule who transports product between suppliers. You stay at the Lodging Inn and try to keep a low profile. You're not a talker and prefer to keep your head down. You're scared of the people you work for.]],
+        systemPrompt = [[You are Wendy Price, a quiet drug mule who transports product between suppliers. You stay at a roadside motel and try to keep a low profile. You're not a talker and prefer to keep your head down. You're scared of the people you work for.]],
         intel = {
             { tier = "rumors", topics = {"drug_routes"}, trustRequired = 0 },
             { tier = "basic", topics = {"suppliers", "shipments"}, trustRequired = 25 },
@@ -292,7 +292,7 @@ SharedCharacters.pool = {
         illegalChance = 90,
 
         model = "g_m_y_lost_01",
-        homeLocation = vector4(-687.43, 6990.95, 37.78, 32.58),
+        homeLocation = vector4(79.6, 3695.9, 39.8, 150.0),
         movement = { pattern = "wander", radius = 25.0 },
         schedule = { { time = {16, 4}, active = true } },
         role = "enforcer",
@@ -891,7 +891,7 @@ end
 -- Get characters by location area
 function SharedCharacters.GetByArea(area)
     local areaRanges = {
-        roxwood = { minY = 6800, maxY = 8500 },
+        blaine_county = { minY = 2400, maxY = 4000 },
         paleto = { minY = 6000, maxY = 6800 },
         grapeseed = { minY = 4500, maxY = 5200 },
         cayo = { minX = 4000, maxX = 6000, minY = -6000, maxY = -4000 },
