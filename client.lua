@@ -1,8 +1,29 @@
 local npcList
-local QBCore = exports['qb-core']:GetCoreObject()
-local addedTargets = {}
+local addedTargets = {}      -- [entity] = true when a target option is attached
+local npcBehavior = {}       -- [netId] = { fleeChance = n } behaviour profile from server
 local activeScenes = {}
 local dispatchSentForNpc = {} -- Track which NPCs we've already dispatched for
+
+-- ============================================================================
+-- FRAMEWORK SHIM (qbx_core native, no qb-core resource required)
+-- ============================================================================
+
+-- Client player data via qbx_core native export
+local function GetPlayerData()
+    return exports.qbx_core:GetPlayerData()
+end
+
+local function IsPolice()
+    local data = GetPlayerData()
+    return data and data.job and data.job.name == 'police'
+end
+
+-- ox_lib notify wrapper (maps qb-style types to ox_lib types)
+local function Notify(msg, nType, duration)
+    local t = nType
+    if t == 'primary' or t == nil then t = 'inform' end
+    lib.notify({ description = msg, type = t, duration = duration })
+end
 
 -- Helper: open an ox_lib context menu from qb-menu style items
 local function openMenu(id, title, menuItems)
@@ -52,6 +73,13 @@ local function GetLocationInfo()
     }
 end
 
+-- Resolve the street name client-side (server-side natives are unreliable)
+local function GetCurrentStreet()
+    local coords = GetEntityCoords(PlayerPedId())
+    local streetHash = GetStreetNameAtCoord(coords.x, coords.y, coords.z)
+    return GetStreetNameFromHashKey(streetHash) or 'Unknown'
+end
+
 -- Send dispatch via wasabi_mdt
 local function SendDispatch(dispatchType, npcNetId, customData)
     if not Config.dispatch or not Config.dispatch.enabled then return end
@@ -62,7 +90,6 @@ local function SendDispatch(dispatchType, npcNetId, customData)
     -- Check if dispatch resource is available
     local resourceState = GetResourceState(Config.dispatch.resource)
     if resourceState ~= 'started' then
-        print('[dps-badpeds] Dispatch resource not running: ' .. Config.dispatch.resource)
         return
     end
 
@@ -122,73 +149,102 @@ local function SendDispatch(dispatchType, npcNetId, customData)
             }
         })
     end
-
-    print('[dps-badpeds] Dispatch sent: ' .. dispatchConfig.title)
 end
 
+-- ============================================================================
+-- TARGET REGISTRATION
+-- ============================================================================
+
+local function addTargetToPed(npc)
+    if Config.target == 'qb-target' then
+        exports['qb-target']:AddTargetEntity(npc, {
+            options = {
+                {
+                    type = "client",
+                    icon = "fas fa-comment",
+                    label = "Talk to the pedestrian",
+                    action = function(entity)
+                        TriggerEvent('my:ped:interaction', entity)
+                    end,
+                    canInteract = function(entity, distance)
+                        return IsPolice()
+                    end
+                }
+            },
+            distance = 2.5
+        })
+    else
+        -- ox_target: onSelect receives { entity = <ped> }; pass the RAW entity through
+        exports.ox_target:addLocalEntity(npc, { {
+            name = 'dps_badpeds_talk',
+            label = 'Talk to the pedestrian',
+            icon = 'fas fa-comment',
+            distance = 2.5,
+            canInteract = function(entity)
+                return IsPolice()
+            end,
+            onSelect = function(data)
+                TriggerEvent('my:ped:interaction', data.entity)
+            end
+        } })
+    end
+    addedTargets[npc] = true
+end
+
+local function removeTargetFromPed(npc)
+    if Config.target == 'qb-target' then
+        exports['qb-target']:RemoveTargetEntity(npc)
+    else
+        exports.ox_target:removeLocalEntity(npc)
+    end
+    addedTargets[npc] = nil
+end
+
+-- Detection loop: attach a target option to nearby peds (police only)
 Citizen.CreateThread(function()
     while true do
-        Wait(1500) -- Optimized: NPCs don't spawn/despawn fast enough to need 500ms checks
+        Wait(1500) -- NPCs don't spawn/despawn fast enough to need 500ms checks
 
-        local ped = PlayerPedId()
-        local data = QBCore.Functions.GetPlayerData()
-        if not data or not data.job or not data.job.name then goto skip end
-        if data.job.name ~= "police" then goto skip end
+        if IsPolice() then
+            local ped = PlayerPedId()
+            local playerCoords = GetEntityCoords(ped) -- hoisted out of the per-ped loop
+            npcList = GetGamePool('CPed')
 
-        npcList = GetGamePool('CPed')
-
-        for _, npc in ipairs(npcList) do
-            if DoesEntityExist(npc) and not IsPedAPlayer(npc) then
-                if not addedTargets[npc] then
-                        local dist = #(GetEntityCoords(ped) - GetEntityCoords(npc))
-                        if dist < 20.0 then
-                            NetworkRegisterEntityAsNetworked(npc)
-                            if Config.target == 'qb-target' then
-                                exports['qb-target']:AddTargetEntity(npc, {
-                                    options = {
-                                        {
-                                            type = "client",
-                                            icon = "fas fa-comment",
-                                            label = "Talk to the pedestrian",
-                                            action = function(entity)
-                                                TriggerEvent('my:ped:interaction', entity)
-                                            end,
-                                            canInteract = function(entity, distance)
-                                                local Player = QBCore.Functions.GetPlayerData()
-                                                return Player and Player.job and Player.job.name == 'police'
-                                            end
-                                        }
-                                    },
-                                    distance = 2.5
-                                })
-                                elseif Config.target == 'ox-target' then
-                                    exports.ox_target:addLocalEntity(npc, { {
-                                        name = 'talk',
-                                        label = 'Talk to the pedestrian',
-                                        icon = 'fas fa-comment',
-                                        distance = 2.5,
-                                        canInteract = function(entity)
-                                            local Player = QBCore.Functions.GetPlayerData()
-                                            return Player and Player.job.name == 'police'
-                                        end,
-                                        onSelect = function(data)
-                                            TriggerEvent('my:ped:interaction', { npc = data.entity })
-                                        end
-                                    } })
-                                end
-                            addedTargets[npc] = true
-                        end
+            for _, npc in ipairs(npcList) do
+                if DoesEntityExist(npc) and not IsPedAPlayer(npc) and not addedTargets[npc] then
+                    if #(playerCoords - GetEntityCoords(npc)) < 20.0 then
+                        -- NOTE: NetworkRegisterEntityAsNetworked is deferred until an
+                        -- officer actually selects the ped (see my:ped:interaction).
+                        addTargetToPed(npc)
                     end
                 end
             end
-        ::skip::
+        end
+    end
+end)
+
+-- Prune loop: drop targets for recycled/despawned handles and out-of-range peds
+Citizen.CreateThread(function()
+    while true do
+        Wait(5000)
+        local playerCoords = GetEntityCoords(PlayerPedId())
+        for npc in pairs(addedTargets) do
+            if not DoesEntityExist(npc) then
+                -- Entity handle is gone (and may be recycled); just clear the flag so
+                -- a future ped reusing this handle re-evaluates and re-registers.
+                addedTargets[npc] = nil
+            elseif #(playerCoords - GetEntityCoords(npc)) > 25.0 then
+                -- Ped left interaction range; remove so it re-evaluates when back.
+                removeTargetFromPed(npc)
+            end
+        end
     end
 end)
 
 RegisterNetEvent('playSyncedScene')
 AddEventHandler('playSyncedScene', function(entity, dict, anim)
-    if not DoesEntityExist(entity) then 
-        return 
+    if not DoesEntityExist(entity) then
+        return
     end
 
     local coords = GetEntityCoords(entity)
@@ -196,15 +252,21 @@ AddEventHandler('playSyncedScene', function(entity, dict, anim)
 
     NetworkRequestControlOfEntity(entity)
 
-    while not NetworkHasControlOfEntity(entity) do
-        Wait(0)
+    -- Bounded wait for entity control (avoid a permanent Wait(0) spin)
+    local attempts = 0
+    while not NetworkHasControlOfEntity(entity) and attempts < 50 do
+        Wait(10)
         NetworkRequestControlOfEntity(entity)
+        attempts = attempts + 1
     end
 
     RequestAnimDict(dict)
-    while not HasAnimDictLoaded(dict) do 
-        Wait(100) 
+    local dictAttempts = 0
+    while not HasAnimDictLoaded(dict) and dictAttempts < 50 do
+        Wait(100)
+        dictAttempts = dictAttempts + 1
     end
+    if not HasAnimDictLoaded(dict) then return end
 
     local scene = NetworkCreateSynchronisedScene(coords.x, coords.y, coords.z, rot.x, rot.y, rot.z, 2, false, true, 1.0, 0.0, 1.0)
 
@@ -233,10 +295,18 @@ end
 RegisterNetEvent('my:ped:interaction')
 AddEventHandler('my:ped:interaction', function(entity)
     local npc = entity
-    local jobData = QBCore.Functions.GetPlayerData()
-    if jobData.job.name ~= 'police' then
-        QBCore.Functions.Notify('You are not police', 'error')
+    -- Safety: accept a raw entity, but tolerate a legacy { entity = } / { npc = } wrap
+    if type(npc) == 'table' then npc = npc.entity or npc.npc end
+
+    if not IsPolice() then
+        Notify('You are not police', 'error')
         return
+    end
+    if not npc or not DoesEntityExist(npc) then return end
+
+    -- Defer network registration until an officer actually interacts with the ped
+    if not NetworkGetEntityIsNetworked(npc) then
+        NetworkRegisterEntityAsNetworked(npc)
     end
 
     TriggerEvent('showmenu', { npc = npc })
@@ -245,19 +315,32 @@ end)
 RegisterNetEvent('showmenu')
 AddEventHandler('showmenu', function(data)
     local npc = data.npc
-    local netId = NetworkGetNetworkIdFromEntity(npc)
-    local test = NetworkGetEntityIsNetworked(npc)
-    print(test)
     if not npc or not DoesEntityExist(npc) or IsPedDeadOrDying(npc, true) then return end
 
-    TriggerServerEvent('pedInteraction:request', netId)
+    if not NetworkGetEntityIsNetworked(npc) then
+        NetworkRegisterEntityAsNetworked(npc)
+        -- Give the network id a moment to settle before we read it
+        local netAttempts = 0
+        while not NetworkGetEntityIsNetworked(npc) and netAttempts < 25 do
+            Wait(0)
+            netAttempts = netAttempts + 1
+        end
+    end
+
+    local netId = NetworkGetNetworkIdFromEntity(npc)
+    local gender = IsPedMale(npc) and "MALE" or "FEMALE"
+    local modelHash = GetEntityModel(npc)
+
+    TriggerServerEvent('pedInteraction:request', netId, gender, modelHash)
 end)
 
 RegisterNetEvent('pedInteraction:approved')
-AddEventHandler('pedInteraction:approved', function(netId)
+AddEventHandler('pedInteraction:approved', function(netId, behavior)
     local npc = NetworkGetEntityFromNetworkId(netId)
     if not npc or not DoesEntityExist(npc) then return end
-    
+
+    npcBehavior[netId] = behavior or {}
+
     local ped = PlayerPedId()
     SetBlockingOfNonTemporaryEvents(npc, true)
     TaskTurnPedToFaceEntity(npc, ped, -1)
@@ -344,7 +427,11 @@ AddEventHandler('npc:showIdCard', function(data)
     local modelHash = GetEntityModel(npc)
 
     local mugshot = RegisterPedheadshot(npc)
-    while not IsPedheadshotReady(mugshot) do Wait(10) end
+    local msAttempts = 0
+    while not IsPedheadshotReady(mugshot) and msAttempts < 100 do
+        Wait(10)
+        msAttempts = msAttempts + 1
+    end
     local mugshotname = GetPedheadshotTxdString(mugshot)
     RequestStreamedTextureDict(mugshotname, false)
 
@@ -356,13 +443,18 @@ AddEventHandler('addname', function(netId, mugshot, mugshotname, showingId, firs
     Citizen.CreateThread(function()
         local hasHistory = arrestHistory and #arrestHistory > 0
 
+        -- Load the ID-card texture dict ONCE, before the draw loop
+        local dict = "idcard"
+        local tex = "ID-card"
+        RequestStreamedTextureDict(dict, true)
+        local dictAttempts = 0
+        while not HasStreamedTextureDictLoaded(dict) and dictAttempts < 100 do
+            Wait(10)
+            dictAttempts = dictAttempts + 1
+        end
+
         while showingId do
             Wait(0)
-            local dict = "idcard"
-            local tex = "ID-card"
-
-            RequestStreamedTextureDict(dict, true)
-            while not HasStreamedTextureDictLoaded(dict) do Wait(0) end
 
             DrawSprite(dict, tex, 0.80, 0.40, 0.35, 0.42, 0.0, 255, 255, 255, 255)
 
@@ -415,6 +507,7 @@ AddEventHandler('addname', function(netId, mugshot, mugshotname, showingId, firs
 
         if mugshot and mugshot > 0 then UnregisterPedheadshot(mugshot) end
         if mugshotname then SetStreamedTextureDictAsNoLongerNeeded(mugshotname) end
+        SetStreamedTextureDictAsNoLongerNeeded(dict)
 
         TriggerEvent('showmenu', { npc = NetworkGetEntityFromNetworkId(netId) })
     end)
@@ -439,30 +532,36 @@ AddEventHandler('npc:arrest', function(data)
     local ped = PlayerPedId()
     local pednetId = NetworkGetNetworkIdFromEntity(ped)
     local stungun = GetHashKey('WEAPON_STUNGUN')
-    local arrestScenario = math.random(1, 2)
     local netId = NetworkGetNetworkIdFromEntity(npc)
     local entity = NetworkGetEntityFromNetworkId(netId)
+    local street = GetCurrentStreet()
+
+    -- Flee behaviour is driven by the NPC's personality (fleeChance), not a coin flip
+    local behavior = npcBehavior[netId] or {}
+    local fleeChance = behavior.fleeChance or 50
+    local willFlee = math.random(100) <= fleeChance
 
     RequestAnimDict('missminuteman_1ig_2')
-    while not HasAnimDictLoaded('missminuteman_1ig_2') do
+    local animAttempts = 0
+    while not HasAnimDictLoaded('missminuteman_1ig_2') and animAttempts < 50 do
         Wait(100)
+        animAttempts = animAttempts + 1
     end
 
-    if arrestScenario == 1 then
+    if not willFlee then
         -- Compliant arrest - no chase needed
         ClearPedTasksImmediately(npc)
         TriggerEvent("playSyncedScene", entity, "missminuteman_1ig_2", "handsup_base")
         Wait(750)
         DoScreenFadeOut(500)
         Wait(800)
-        TriggerServerEvent('arrestnpc', netId)
+        TriggerServerEvent('arrestnpc', netId, false, nil, street)
 
         -- Send arrest completed dispatch
         SendDispatch('arrestMade', netId)
         dispatchSentForNpc[netId] = nil -- Clean up tracking
 
-        Wait(100)
-        Wait(100)
+        Wait(200)
         StopPedScene(netId)
         StopPedScene(pednetId)
         Wait(500)
@@ -470,14 +569,11 @@ AddEventHandler('npc:arrest', function(data)
         return
     end
 
-    -- Scenario 2: Suspect flees - send pursuit dispatch
+    -- Suspect flees - send pursuit dispatch
     SendDispatch('suspectFleeing', netId)
 
-    if Config.inventory == 'qb-inventory' then
-        TriggerServerEvent('additem:qb', netId)
-    else
-        TriggerServerEvent('additem:ox', netId)
-    end
+    -- Officer gets a stun gun for the chase
+    TriggerServerEvent('additem:stungun', netId)
 
     if IsPedMale(npc) then
         BeginTextCommandPrint('STRING')
@@ -496,9 +592,16 @@ AddEventHandler('npc:arrest', function(data)
     Citizen.CreateThread(function()
         local arrested = false
         local animated = false
+        local startTime = GetGameTimer()
+        local timeout = 300000 -- 5 minutes safety cap so the thread can never spin forever
 
         while not arrested do
             Wait(0)
+
+            -- Abort conditions: timeout, ped gone
+            if GetGameTimer() - startTime > timeout or not DoesEntityExist(npc) then
+                break
+            end
 
             local pedCoords = GetEntityCoords(ped)
             local npcCoords = GetEntityCoords(npc)
@@ -526,14 +629,13 @@ AddEventHandler('npc:arrest', function(data)
                 Wait(500)
                 DoScreenFadeOut(500)
                 Wait(800)
-                TriggerServerEvent('arrestnpc', netId)
+                TriggerServerEvent('arrestnpc', netId, false, nil, street)
 
                 -- Send arrest completed dispatch after chase
                 SendDispatch('arrestMade', netId)
                 dispatchSentForNpc[netId] = nil -- Clean up tracking
 
-                Wait(100)
-                Wait(100)
+                Wait(200)
                 StopPedScene(netId)
                 StopPedScene(pednetId)
                 Wait(500)
@@ -553,6 +655,7 @@ AddEventHandler('npc:closeMenu', function(data)
         TriggerServerEvent('exitclearance', netId)
         -- Clean up dispatch tracking (NPC released without arrest)
         dispatchSentForNpc[netId] = nil
+        npcBehavior[netId] = nil
     end
 end)
 
@@ -571,8 +674,9 @@ AddEventHandler('deletenpc', function(netId)
     if npc and DoesEntityExist(npc) then
         DeleteEntity(npc)
     end
-    -- Clean up dispatch tracking
+    -- Clean up tracking
     dispatchSentForNpc[netId] = nil
+    npcBehavior[netId] = nil
 end)
 
 -- Seize item from NPC - triggered by menu click
@@ -620,7 +724,7 @@ AddEventHandler('npc:requestIntel', function(data)
     TriggerServerEvent('npc:requestIntelOffer', netId)
 
     -- Show loading notification
-    QBCore.Functions.Notify('Questioning suspect...', 'primary', 2000)
+    Notify('Questioning suspect...', 'primary', 2000)
 end)
 
 -- Server responds with intel offer
@@ -645,7 +749,7 @@ AddEventHandler('npc:intelOfferResponse', function(netId, hasIntel, intelType, i
             "Alright, look... I can tell you where the real stuff is going down."
         }
 
-        QBCore.Functions.Notify(dialogues[math.random(#dialogues)], 'primary', 4000)
+        Notify(dialogues[math.random(#dialogues)], 'primary', 4000)
 
         lib.registerContext({
             id = 'intel_negotiation',
@@ -666,7 +770,7 @@ AddEventHandler('npc:intelOfferResponse', function(netId, hasIntel, intelType, i
             "You got the wrong guy. I ain't no snitch anyway."
         }
 
-        QBCore.Functions.Notify(noInfoDialogues[math.random(#noInfoDialogues)], 'error', 3000)
+        Notify(noInfoDialogues[math.random(#noInfoDialogues)], 'error', 3000)
 
         -- Return to arrest menu
         TriggerEvent('arrestmenu', { npc = npc })
@@ -686,7 +790,7 @@ AddEventHandler('npc:hearIntel', function(data)
 
     local typeLabel = intelTypeLabels[currentIntelOffer.type] or "Criminal Activity"
 
-    QBCore.Functions.Notify("~y~[" .. typeLabel .. "]~s~ " .. currentIntelOffer.content, 'primary', 8000)
+    Notify("~y~[" .. typeLabel .. "]~s~ " .. currentIntelOffer.content, 'primary', 8000)
 
     -- Small delay then show options again
     Wait(2000)
@@ -709,18 +813,20 @@ end)
 RegisterNetEvent('npc:acceptIntel')
 AddEventHandler('npc:acceptIntel', function(data)
     if not currentIntelOffer then
-        QBCore.Functions.Notify('No active intel offer', 'error')
+        Notify('No active intel offer', 'error')
         return
     end
 
-    TriggerServerEvent('npc:acceptIntelDeal', data.netId, currentIntelOffer.type, currentIntelOffer.content)
+    -- Capture the offer BEFORE clearing it, so arrestWithIntel still has the data
+    local offer = currentIntelOffer
+    TriggerServerEvent('npc:acceptIntelDeal', data.netId, offer.type, offer.content)
 
     -- Proceed to arrest with intel flag
     local npc = NetworkGetEntityFromNetworkId(data.netId)
     currentIntelOffer = nil
 
     -- Modified arrest - with intel recorded
-    TriggerEvent('npc:arrestWithIntel', { npc = npc, gaveIntel = true })
+    TriggerEvent('npc:arrestWithIntel', { npc = npc, gaveIntel = true, intel = offer })
 end)
 
 -- Arrest with intel flag
@@ -729,13 +835,15 @@ AddEventHandler('npc:arrestWithIntel', function(data)
     local npc = data.npc
     if not npc or not DoesEntityExist(npc) then return end
 
-    local ped = PlayerPedId()
     local netId = NetworkGetNetworkIdFromEntity(npc)
     local entity = NetworkGetEntityFromNetworkId(netId)
+    local street = GetCurrentStreet()
 
     RequestAnimDict('missminuteman_1ig_2')
-    while not HasAnimDictLoaded('missminuteman_1ig_2') do
+    local animAttempts = 0
+    while not HasAnimDictLoaded('missminuteman_1ig_2') and animAttempts < 50 do
         Wait(100)
+        animAttempts = animAttempts + 1
     end
 
     -- Intel cooperators don't run
@@ -744,12 +852,12 @@ AddEventHandler('npc:arrestWithIntel', function(data)
     Wait(750)
     DoScreenFadeOut(500)
     Wait(800)
-    TriggerServerEvent('arrestnpc', netId, true, currentIntelOffer)
+    TriggerServerEvent('arrestnpc', netId, true, data.intel, street)
 
     SendDispatch('arrestMade', netId)
     dispatchSentForNpc[netId] = nil
 
-    Wait(100)
+    Wait(200)
     StopPedScene(netId)
     Wait(500)
     DoScreenFadeIn(500)
@@ -759,7 +867,7 @@ end)
 RegisterNetEvent('npc:offerInformant')
 AddEventHandler('npc:offerInformant', function(data)
     TriggerServerEvent('npc:offerInformantDeal', data.netId)
-    QBCore.Functions.Notify('Making informant offer...', 'primary', 2000)
+    Notify('Making informant offer...', 'primary', 2000)
 end)
 
 -- Informant response from server
@@ -768,7 +876,7 @@ AddEventHandler('npc:informantResponse', function(netId, accepted, npcName, reas
     local npc = NetworkGetEntityFromNetworkId(netId)
 
     if accepted then
-        QBCore.Functions.Notify(npcName.firstname .. ' agreed to become an informant!', 'success', 5000)
+        Notify(npcName.firstname .. ' agreed to become an informant!', 'success', 5000)
 
         lib.registerContext({
             id = 'informant_recruited',
@@ -781,14 +889,14 @@ AddEventHandler('npc:informantResponse', function(netId, accepted, npcName, reas
         lib.showContext('informant_recruited')
     else
         if reason == 'already_informant' then
-            QBCore.Functions.Notify(npcName.firstname .. ' is already a registered informant', 'error')
+            Notify(npcName.firstname .. ' is already a registered informant', 'error')
         else
             local refusalDialogues = {
                 "I ain't no rat! Do what you gotta do.",
                 "You think I'm stupid? My life wouldn't be worth nothing.",
                 "Nah man, I'd rather do time than snitch."
             }
-            QBCore.Functions.Notify(refusalDialogues[math.random(#refusalDialogues)], 'error', 4000)
+            Notify(refusalDialogues[math.random(#refusalDialogues)], 'error', 4000)
         end
 
         -- Return to arrest menu
@@ -803,9 +911,10 @@ AddEventHandler('npc:releaseInformant', function(data)
     local npc = NetworkGetEntityFromNetworkId(netId)
 
     if npc and DoesEntityExist(npc) then
-        QBCore.Functions.Notify('Informant released. Stay in touch.', 'success')
+        Notify('Informant released. Stay in touch.', 'success')
         TriggerServerEvent('exitclearance', netId)
         dispatchSentForNpc[netId] = nil
+        npcBehavior[netId] = nil
         currentIntelOffer = nil
     end
 end)
@@ -821,7 +930,7 @@ AddEventHandler('npc:requestAIDialogue', function(data)
     if not npc or not DoesEntityExist(npc) then return end
 
     if not Config.aiIntegration or not Config.aiIntegration.enabled then
-        QBCore.Functions.Notify('AI dialogue not enabled', 'error')
+        Notify('AI dialogue not enabled', 'error')
         return
     end
 
@@ -830,7 +939,7 @@ AddEventHandler('npc:requestAIDialogue', function(data)
     -- Check if dps-ainpcs is available
     local resourceState = GetResourceState('dps-ainpcs')
     if resourceState ~= 'started' then
-        QBCore.Functions.Notify('AI NPC system not available', 'error')
+        Notify('AI NPC system not available', 'error')
         return
     end
 
@@ -878,6 +987,6 @@ Respond naturally in 1-2 sentences. Stay in character.
             "Can I help you with something?",
         }
 
-        QBCore.Functions.Notify(fallbackLines[math.random(#fallbackLines)], 'primary', 4000)
+        Notify(fallbackLines[math.random(#fallbackLines)], 'primary', 4000)
     end
 end)

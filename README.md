@@ -1,6 +1,6 @@
-# AC-PedInteraction - Police NPC Interaction System
+# dps-badpeds - Police NPC Interaction System
 
-A FiveM resource that allows police officers to interact with random pedestrian NPCs - check IDs, frisk for items, seize contraband, and make arrests. Designed for QBCore/QBX servers with a FivePD-style experience.
+A FiveM resource that allows police officers to interact with random pedestrian NPCs - check IDs, frisk for items, seize contraband, and make arrests. Built **qbx_core-native** (Qbox) using ox_lib, ox_target and ox_inventory, for a FivePD-style experience.
 
 ---
 
@@ -127,8 +127,9 @@ This script gives police officers the ability to stop and interact with **any ra
 | Feature | Description |
 |---------|-------------|
 | Auto-scanning | Scans for pedestrians within 20m every 1.5 seconds |
-| Network registration | NPCs are registered as network entities for sync |
-| Target integration | Works with qb-target or ox_target |
+| Network registration | Deferred: a ped is only registered as networked when an officer actually interacts (perf) |
+| Target pruning | Targets are removed when a ped despawns or leaves range, so handles don't leak |
+| Target integration | Works with ox_target (default) or qb-target |
 | Job restriction | Only visible to players with `police` job |
 
 ### 2. ID Card System
@@ -152,9 +153,10 @@ This script gives police officers the ability to stop and interact with **any ra
 | Feature | Description |
 |---------|-------------|
 | Conditional | Only available when contraband found |
-| Two scenarios | 50% compliant, 50% runner |
+| Personality-driven flight | Whether a suspect runs is driven by their personality `fleeChance` (paranoid/aggressive run often, smooth/calm rarely), not a coin flip |
 | Chase mechanic | Runner must be tazed to arrest |
 | Stun gun provision | Officer receives stun gun for chase |
+| Evidence-safe seizure | Seized contraband goes to an evidence stash (or is destroyed + logged) — never into the officer's own inventory |
 
 ### 5. MDT/Dispatch Integration
 | Event | Dispatch Sent | Priority |
@@ -163,14 +165,30 @@ This script gives police officers the ability to stop and interact with **any ra
 | Suspect flees | "Foot Pursuit" | 3 |
 | Arrest complete | "Arrest Made" | 1 |
 
-### 6. Intel Trading System (NEW)
+### 6. Intel Trading System
 | Feature | Description |
 |---------|-------------|
 | **Intel Negotiation** | NPCs can offer information to reduce sentence |
+| **Personality-driven intel** | Chance a suspect talks uses their personality `intelChance`; characters flagged `canGiveIntel = false` stay silent |
+| **Sentence reduction** | Accepting an intel deal actually multiplies the sentence by `Config.jailSystem.intelReduction` (default 0.5) |
 | **Dynamic Intel** | Generated based on items found (drugs/weapons/gang) |
 | **Intel Database** | All intel stored in `npc_intel_reports` table |
-| **Informant Recruitment** | 40% chance NPC accepts being long-term informant |
+| **Informant Recruitment** | Chance NPC accepts uses their personality `informantChance` |
 | **Release Option** | Release informants without charges to maintain cover |
+
+### 6b. Personalities & Specialties
+Recurring characters (see `shared/characters.lua`) carry a `personality` and `specialty` that now
+drive real behaviour:
+
+| Data | Effect |
+|------|--------|
+| `personality.fleeChance` | Likelihood the suspect runs on arrest |
+| `personality.intelChance` | Likelihood they have useful intel to trade |
+| `personality.informantChance` | Likelihood they accept an informant deal |
+| `character.illegalChance` | How likely their frisk turns up contraband |
+| `character.specialty` | Biases which contraband they carry (drugs/weapons/theft/petty/gang) |
+
+Random (non-recurring) pedestrians use safe defaults (fleeChance 50, intelChance 70, informantChance 40, illegalChance 40).
 
 ### 7. Jail/Unavailability System (NEW)
 | Feature | Description |
@@ -210,7 +228,7 @@ This script gives police officers the ability to stop and interact with **any ra
 
 ```
 dps-badpeds/
-├── fxmanifest.lua      # Resource manifest (v2.0.0)
+├── fxmanifest.lua      # Resource manifest (v2.1.0)
 ├── config.lua          # All configuration (~220 lines)
 │   ├── Jail system settings
 │   ├── AI integration settings
@@ -249,17 +267,21 @@ dps-badpeds/
 
 ### Required
 ```
-qb-core (or qbx_core)   - Framework
-qb-menu                 - Menu UI system
-qb-target OR ox_target  - NPC targeting
+qbx_core      - Framework (qbx_core native; no qb-core resource needed even with the qb bridge on)
+ox_lib        - Menus + notifications (lib.notify / lib.registerContext)
+ox_target     - NPC targeting
+ox_inventory  - Item data + evidence stash + item give/take
+oxmysql       - Jail/intel database
 ```
+
+> Note: qb-target and qs-inventory paths still exist in the code for portability, but the
+> defaults and the tested stack are ox_target + ox_inventory.
 
 ### Inventory Support
 ```lua
-Config.inventory = 'qs-inventory'  -- Options:
--- 'qb-inventory'
+Config.inventory = 'ox_inventory'  -- Options:
+-- 'ox_inventory'  (default, tested)
 -- 'qs-inventory'
--- 'ox_inventory'
 ```
 
 ### Optional (Dispatch)
@@ -278,8 +300,12 @@ Config.dispatch.resource = 'wasabi_mdt'  -- Options:
 
 ```lua
 -- Target & Inventory
-Config.target = 'qb-target'
-Config.inventory = 'qs-inventory'
+Config.target = 'ox_target'
+Config.inventory = 'ox_inventory'
+
+-- Seizure handling (never gives contraband to the officer)
+Config.SeizeMode = 'evidence' -- 'evidence' (ox_inventory stash) | 'destroy' (remove + log)
+Config.evidenceStash = { id = 'evidence-badpeds', label = 'Seized Evidence', slots = 100, maxWeight = 1000000 }
 
 -- Dispatch Integration
 Config.dispatch = {
@@ -312,9 +338,9 @@ Config.lastNames = { "Smith", "Johnson", ... }
 
 ### How Items Are Generated
 
-1. **On resource start**: Server calls `exports['qs-inventory']:GetItemList()`
-2. **Filtering**: Removes items in `excludedItems` list
-3. **On frisk**: Generates 3-6 random items from filtered pool
+1. **On resource start**: Server calls `exports.ox_inventory:Items()` (or `qs-inventory:GetItemList()`)
+2. **Filtering**: Removes items in `excludedItems` list, then splits into legal / illegal sub-pools
+3. **On frisk**: Generates 3-6 items, weighting illegal vs legal by the character's `illegalChance` and biasing the illegal category by `specialty`
 4. **Classification**: Checks against `illegalItems` blacklist
 5. **Persistence**: Inventory stored server-side until NPC deleted
 
@@ -434,10 +460,10 @@ Both scripts could share:
 
 3. **Add to server.cfg**:
    ```cfg
-   ensure qb-core
-   ensure qb-menu
-   ensure qb-target
-   ensure qs-inventory
+   ensure qbx_core
+   ensure ox_lib
+   ensure ox_target
+   ensure ox_inventory
    ensure oxmysql        # Required for jail system
    ensure wasabi_mdt     # Optional for dispatch
    ensure dps-ainpcs     # Optional for AI dialogue
@@ -445,8 +471,9 @@ Both scripts could share:
    ```
 
 4. **Configure** `config.lua`:
-   - Set target system (`qb-target` or `ox-target`)
-   - Set inventory system (`qs-inventory`, `qb-inventory`, `ox_inventory`)
+   - Set target system (`ox_target` default, or `qb-target`)
+   - Set inventory system (`ox_inventory` default, or `qs-inventory`)
+   - Set seizure handling (`Config.SeizeMode` + `Config.evidenceStash`)
    - Enable/disable jail system
    - Enable/disable AI integration
    - Adjust illegal items list
@@ -458,8 +485,8 @@ Both scripts could share:
 ### Quick Start (Minimal Setup)
 ```lua
 -- config.lua minimal changes
-Config.target = 'qb-target'
-Config.inventory = 'qs-inventory'
+Config.target = 'ox_target'
+Config.inventory = 'ox_inventory'
 Config.jailSystem.enabled = false  -- Disable if not using database
 Config.aiIntegration.enabled = false
 ```
@@ -470,9 +497,10 @@ Config.aiIntegration.enabled = false
 
 | Issue | Solution |
 |-------|----------|
-| Target not appearing | Check job is `police`, ensure qb-target running |
+| Target not appearing | Check job is `police`, ensure ox_target running |
 | Items not generating | Verify inventory resource name in config |
 | "Item does not exist" | Item spawn code not in your inventory |
+| Seized items vanish | Expected - they go to the `evidence-badpeds` stash (or are destroyed if `SeizeMode = 'destroy'`) |
 | Dispatch not sending | Check wasabi_mdt is running, dispatch enabled |
 | NPC not responding | Another officer may have it locked |
 
@@ -480,9 +508,8 @@ Config.aiIntegration.enabled = false
 
 ## Credits
 
-- **Original Author**: AlexCarton
-- **Modifications**: Claude (Anthropic) - dispatch integration, qs-inventory support, item seizure, security improvements
-- **Framework**: QBCore/QBX Team
+- **Author**: DPS Development
+- **Framework**: Qbox (qbx_core) / Overextended (ox_lib, ox_target, ox_inventory, oxmysql)
 
 ---
 

@@ -1,4 +1,4 @@
--- AC-PedInteraction Jail Records Table
+-- dps-badpeds (DPS Development) - Jail Records Table
 -- Run this SQL to enable the jail/unavailability system for arrested NPCs
 
 CREATE TABLE IF NOT EXISTS `npc_jail_records` (

@@ -1,13 +1,13 @@
 fx_version 'cerulean'
 game       'gta5'
 lua54      'yes'
-author     'AlexCarton'
+author     'DPS Development'
 description 'Police NPC Interaction System with Intel Trading and Jail System'
-version    '2.0.0'
+version    '2.1.1'
 
 -- Dependencies
--- Required: qb-core, ox_lib, qb-target or ox_target
--- Optional: oxmysql (for jail system), dps-ainpcs (for AI dialogue)
+-- Required: qbx_core, ox_lib, ox_target, ox_inventory, oxmysql
+-- Optional: dps-ainpcs (for AI dialogue), a dispatch/MDT resource (wasabi_mdt/ps-dispatch/cd_dispatch)
 -- Run sql/jail_records.sql if using the jail system
 
 shared_scripts {
@@ -17,7 +17,7 @@ shared_scripts {
 }
 
 server_scripts {
-    '@oxmysql/lib/MySQL.lua', -- Optional: only needed if jail system enabled
+    '@oxmysql/lib/MySQL.lua', -- Required if jail system enabled
     'server.lua'
 }
 
@@ -30,8 +30,8 @@ files {
 }
 
 dependencies {
-    'qb-core',
-    'ox_lib'
+    'qbx_core',
+    'ox_lib',
+    'ox_target',
+    'oxmysql'
 }
-
-

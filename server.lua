@@ -1,14 +1,32 @@
-local QBCore = exports['qb-core']:GetCoreObject()
+-- ============================================================================
+-- FRAMEWORK SHIM (qbx_core native, no qb-core resource required)
+-- ============================================================================
+
+local function GetPlayer(src)
+    return exports.qbx_core:GetPlayer(src)
+end
+
+-- Notify a client via ox_lib (maps qb-style types to ox_lib types)
+local function NotifyClient(src, msg, nType)
+    local t = nType
+    if t == 'primary' or t == nil then t = 'inform' end
+    TriggerClientEvent('ox_lib:notify', src, { description = msg, type = t })
+end
+
 local activeInteractions = {}
 local npcInventories = {}
 local npcNames = {}
 local npcIllegal = {}
 local npcLocks = {}
-local npcModels = {} -- Store NPC model hashes
+local npcModels = {}         -- Store NPC model hashes
+local npcCharacterData = {}  -- Store recurring character data for NPCs
 
 -- Cache for item list from inventory system
 local cachedItemList = nil
 local filteredItemPool = nil
+local legalPool = nil
+local illegalPool = nil
+local illegalByCategory = nil
 
 -- ============================================================================
 -- JAIL STATUS CACHE (Performance optimization for high-pop servers)
@@ -20,7 +38,7 @@ local filteredItemPool = nil
 local jailStatusCache = {}  -- { ["Firstname_Lastname"] = true } for jailed characters
 local lastCacheRefresh = 0  -- GetGameTimer() value of last refresh
 
--- Refresh the jail status cache from database
+-- Refresh the jail status cache from database (async)
 local function refreshJailCache()
     local now = GetGameTimer()
     local cacheTTL = (Config.jailStatusCache and Config.jailStatusCache.refreshInterval) or 60000
@@ -28,7 +46,10 @@ local function refreshJailCache()
     -- Only refresh if cache has expired
     if now - lastCacheRefresh < cacheTTL then return end
 
-    local results = exports.oxmysql:executeSync([[
+    -- Optimistically bump the timestamp so concurrent callers don't all query
+    lastCacheRefresh = now
+
+    local results = MySQL.query.await([[
         SELECT npc_firstname, npc_lastname, release_at
         FROM npc_jail_records
         WHERE released = 0 AND release_at > NOW()
@@ -40,18 +61,9 @@ local function refreshJailCache()
         local key = row.npc_firstname .. "_" .. row.npc_lastname
         jailStatusCache[key] = true
     end
-
-    lastCacheRefresh = now
-
-    -- Log cache refresh if debug enabled
-    if Config.jailStatusCache and Config.jailStatusCache.debug then
-        local count = 0
-        for _ in pairs(jailStatusCache) do count = count + 1 end
-        print('[dps-badpeds] Jail cache refreshed: ' .. count .. ' characters currently jailed')
-    end
 end
 
--- Check if character is in jail using cache (fast, no DB hit)
+-- Check if character is in jail using cache (fast, no DB hit unless expired)
 local function isCharacterJailedCached(firstname, lastname)
     refreshJailCache() -- Only hits DB if cache expired
     local key = firstname .. "_" .. lastname
@@ -105,8 +117,10 @@ local function calculateJailTime(inventory)
 end
 
 -- Record an arrest in the database
-local function recordArrest(src, netId, jailHours, gaveIntel, intelData)
-    local Player = QBCore.Functions.GetPlayer(src)
+-- Street is resolved on the CLIENT (server-side street natives are unreliable)
+-- and passed in; we fall back to 'Unknown' if it wasn't provided.
+local function recordArrest(src, netId, jailHours, gaveIntel, intelData, street)
+    local Player = GetPlayer(src)
     if not Player then return false end
 
     local npcName = npcNames[netId]
@@ -117,8 +131,8 @@ local function recordArrest(src, netId, jailHours, gaveIntel, intelData)
 
     local playerPed = GetPlayerPed(src)
     local coords = GetEntityCoords(playerPed)
-    local streetHash = GetStreetNameAtCoord(coords.x, coords.y, coords.z)
-    local streetName = GetStreetNameFromHashKey(streetHash) or 'Unknown'
+    local streetName = street
+    if not streetName or streetName == '' then streetName = 'Unknown' end
 
     -- Build charges from inventory
     local charges = {}
@@ -150,7 +164,7 @@ local function recordArrest(src, netId, jailHours, gaveIntel, intelData)
     local chargesJson = json.encode(charges)
     local intelJson = intelData and json.encode(intelData) or nil
 
-    exports.oxmysql:execute(insertQuery, {
+    MySQL.insert.await(insertQuery, {
         npcModel,
         npcName.firstname,
         npcName.lastname,
@@ -172,13 +186,12 @@ local function recordArrest(src, netId, jailHours, gaveIntel, intelData)
     -- Notify dps-ainpcs immediately so they can remove the NPC from active spawns
     TriggerEvent('dps-ainpcs:characterArrested', npcName.firstname, npcName.lastname, jailHours)
 
-    print('[dps-badpeds] Arrest recorded: ' .. npcName.firstname .. ' ' .. npcName.lastname .. ' - ' .. jailHours .. ' game hours')
     return true
 end
 
--- Check if an NPC identity is currently in jail
+-- Check if an NPC identity is currently in jail (async)
 local function isNpcInJail(firstname, lastname)
-    local result = exports.oxmysql:executeSync([[
+    local result = MySQL.query.await([[
         SELECT id, release_at, TIMESTAMPDIFF(MINUTE, NOW(), release_at) as minutes_remaining
         FROM npc_jail_records
         WHERE npc_firstname = ? AND npc_lastname = ?
@@ -194,9 +207,9 @@ local function isNpcInJail(firstname, lastname)
     return false, 0
 end
 
--- Get arrest history for an NPC
+-- Get arrest history for an NPC (async)
 local function getNpcArrestHistory(firstname, lastname)
-    local result = exports.oxmysql:executeSync([[
+    local result = MySQL.query.await([[
         SELECT * FROM npc_jail_records
         WHERE npc_firstname = ? AND npc_lastname = ?
         ORDER BY arrested_at DESC
@@ -208,13 +221,13 @@ end
 
 -- Record intel given by NPC
 local function recordIntel(src, npcName, intelType, intelContent, locationHint, sourceType)
-    local Player = QBCore.Functions.GetPlayer(src)
+    local Player = GetPlayer(src)
     if not Player then return false end
 
     local citizenId = Player.PlayerData.citizenid
     local fullName = npcName.firstname .. ' ' .. npcName.lastname
 
-    exports.oxmysql:execute([[
+    MySQL.insert.await([[
         INSERT INTO npc_intel_reports
         (source_type, source_npc_name, receiving_officer, intel_type, intel_content, location_hint, reliability)
         VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -233,7 +246,7 @@ end
 
 -- Recruit NPC as informant
 local function recruitInformant(src, netId)
-    local Player = QBCore.Functions.GetPlayer(src)
+    local Player = GetPlayer(src)
     if not Player then return false end
 
     local npcName = npcNames[netId]
@@ -244,8 +257,8 @@ local function recruitInformant(src, netId)
     local citizenId = Player.PlayerData.citizenid
     local officerName = Player.PlayerData.charinfo.firstname .. ' ' .. Player.PlayerData.charinfo.lastname
 
-    -- Check if already an informant
-    local existing = exports.oxmysql:executeSync([[
+    -- Check if already an informant (async)
+    local existing = MySQL.query.await([[
         SELECT id FROM npc_informants
         WHERE npc_firstname = ? AND npc_lastname = ? AND active = 1
     ]], {npcName.firstname, npcName.lastname})
@@ -254,7 +267,7 @@ local function recruitInformant(src, netId)
         return false, 'already_informant'
     end
 
-    exports.oxmysql:execute([[
+    MySQL.insert.await([[
         INSERT INTO npc_informants
         (npc_model, npc_firstname, npc_lastname, handler_citizenid, handler_name, trust_level)
         VALUES (?, ?, ?, ?, ?, 1)
@@ -267,13 +280,12 @@ local function recruitInformant(src, netId)
     })
 
     -- Also mark in jail record if exists
-    exports.oxmysql:execute([[
+    MySQL.update.await([[
         UPDATE npc_jail_records SET is_informant = 1, informant_handler = ?
         WHERE npc_firstname = ? AND npc_lastname = ? AND released = 0
         ORDER BY arrested_at DESC LIMIT 1
     ]], {citizenId, npcName.firstname, npcName.lastname})
 
-    print('[dps-badpeds] Informant recruited: ' .. npcName.firstname .. ' ' .. npcName.lastname)
     return true
 end
 
@@ -329,30 +341,9 @@ local function buildLookupTables()
     end
 end
 
--- Get all items from the inventory system
-local function getItemListFromInventory()
-    if cachedItemList then return cachedItemList end
-
-    local items = nil
-
-    if Config.inventory == 'qs-inventory' then
-        items = exports['qs-inventory']:GetItemList()
-    elseif Config.inventory == 'ox_inventory' or Config.inventory == 'ox-inventory' then
-        items = exports.ox_inventory:Items()
-    else
-        -- QBCore shared items
-        items = QBCore.Shared.Items
-    end
-
-    if items and next(items) then
-        cachedItemList = items
-        print('[dps-badpeds] Loaded ' .. (tableCount(items) or 0) .. ' items from inventory system')
-    else
-        print('[dps-badpeds] WARNING: Could not load items from inventory, using fallback')
-        cachedItemList = {}
-    end
-
-    return cachedItemList
+-- Check if an item is illegal
+local function isItemIllegal(itemName)
+    return illegalLookup[itemName] == true
 end
 
 -- Count table entries
@@ -362,7 +353,53 @@ function tableCount(t)
     return count
 end
 
--- Build filtered item pool (excludes job items, seeds, etc.)
+-- Get all items from the inventory system
+local function getItemListFromInventory()
+    if cachedItemList then return cachedItemList end
+
+    local items = nil
+
+    if Config.inventory == 'qs-inventory' then
+        items = exports['qs-inventory']:GetItemList()
+    else
+        -- ox_inventory (default for this stack)
+        items = exports.ox_inventory:Items()
+    end
+
+    if items and next(items) then
+        cachedItemList = items
+    else
+        print('[dps-badpeds] WARNING: Could not load items from inventory, using fallback')
+        cachedItemList = {}
+    end
+
+    return cachedItemList
+end
+
+-- Categorise an illegal item so we can bias contraband by a character's specialty
+local function categorizeIllegal(itemName)
+    local n = itemName:lower()
+    if n:find("weapon_") or n:find("ammo") then return 'weapons' end
+    if n:find("lockpick") or n:find("thermite") or n:find("hack") or n:find("vpn")
+        or n:find("usb") or n:find("laptop") or n:find("crypto") or n:find("ziptie")
+        or n:find("handcuff") or n:find("electronickit") then return 'crimetool' end
+    if n:find("gold") or n:find("diamond") or n:find("rolex") or n:find("jewel")
+        or n:find("chain") or n:find("bracelet") or n:find("necklace") or n:find("stolen")
+        or n:find("marked") or n:find("moneybag") or n:find("fake") or n:find("dirty_money") then return 'theft' end
+    return 'drugs'
+end
+
+-- Map a character specialty to a contraband category
+local specialtyCategory = {
+    drugs = 'drugs',
+    weapons = 'weapons',
+    theft = 'theft',
+    gang = 'weapons',
+    petty = 'crimetool',
+    informant = nil,
+}
+
+-- Build filtered item pool (excludes job items, seeds, etc.) and split legal/illegal
 local function getFilteredItemPool()
     if filteredItemPool then return filteredItemPool end
 
@@ -376,19 +413,30 @@ local function getFilteredItemPool()
             local label = itemData.label or itemData.name or itemName
             local itemType = itemData.type
 
-            -- Include regular items and some weapons, skip attachments/components
-            if itemType == 'item' or itemType == 'weapon' then
+            -- qs-inventory item defs carry a `type` field; honor it when present.
+            -- ox_inventory (this stack's default) does NOT — it keys items by name and
+            -- derives weapon status from the name prefix. Without this branch the pool
+            -- comes back empty on ox and every NPC falls back to Config.fallbackItems,
+            -- silently defeating the specialty/contraband generation below.
+            local includeItem, isWeapon
+            if itemType then
+                includeItem = (itemType == 'item' or itemType == 'weapon')
+                isWeapon = (itemType == 'weapon')
+            else
+                isWeapon = itemName:lower():find('^weapon_') ~= nil
+                includeItem = true
+            end
+
+            if includeItem then
                 table.insert(filteredItemPool, {
                     item = itemName,
                     label = label,
-                    isWeapon = (itemType == 'weapon'),
+                    isWeapon = isWeapon,
                     weight = itemData.weight or 0
                 })
             end
         end
     end
-
-    print('[dps-badpeds] Filtered item pool: ' .. #filteredItemPool .. ' items available for NPCs')
 
     -- If pool is empty, use fallback
     if #filteredItemPool == 0 and Config.fallbackItems then
@@ -396,37 +444,72 @@ local function getFilteredItemPool()
         print('[dps-badpeds] Using fallback item list')
     end
 
+    -- Split into legal / illegal sub-pools for illegalChance-based generation
+    legalPool = {}
+    illegalPool = {}
+    illegalByCategory = { drugs = {}, weapons = {}, theft = {}, crimetool = {} }
+
+    for _, entry in ipairs(filteredItemPool) do
+        if isItemIllegal(entry.item) then
+            table.insert(illegalPool, entry)
+            local cat = categorizeIllegal(entry.item)
+            if illegalByCategory[cat] then
+                table.insert(illegalByCategory[cat], entry)
+            end
+        else
+            table.insert(legalPool, entry)
+        end
+    end
+
     return filteredItemPool
 end
 
--- Check if an item is illegal
-local function isItemIllegal(itemName)
-    return illegalLookup[itemName] == true
-end
+-- Generate random inventory for an NPC, biased by the character's illegalChance
+-- and specialty (falls back to sensible defaults for random pedestrians).
+local function generateNpcInventory(netId)
+    getFilteredItemPool()
+    if (not legalPool or #legalPool == 0) and (not illegalPool or #illegalPool == 0) then
+        return {}
+    end
 
--- Generate random inventory for an NPC
-local function generateNpcInventory()
-    local pool = getFilteredItemPool()
-    if not pool or #pool == 0 then return {} end
+    local char = netId and npcCharacterData[netId] or nil
+    local illegalChance = (char and char.illegalChance) or 40
+    local prefCat = char and specialtyCategory[char.specialty] or nil
 
     local inventory = {}
     local itemCount = math.random(Config.npcItemCount.min or 3, Config.npcItemCount.max or 6)
 
-    for i = 1, itemCount do
-        local randomItem = pool[math.random(#pool)]
-        local quantity = 1
+    for _ = 1, itemCount do
+        local chosen
+        local pickIllegal = (#illegalPool > 0) and (math.random(100) <= illegalChance)
 
-        -- Weapons always qty 1, other items random
-        if not randomItem.isWeapon then
-            quantity = math.random(Config.itemQuantity.min or 1, Config.itemQuantity.max or 5)
+        if pickIllegal then
+            -- Prefer the character's specialty category most of the time
+            local catPool = prefCat and illegalByCategory[prefCat]
+            if catPool and #catPool > 0 and math.random(100) <= 70 then
+                chosen = catPool[math.random(#catPool)]
+            else
+                chosen = illegalPool[math.random(#illegalPool)]
+            end
+        elseif #legalPool > 0 then
+            chosen = legalPool[math.random(#legalPool)]
+        elseif #illegalPool > 0 then
+            chosen = illegalPool[math.random(#illegalPool)]
         end
 
-        table.insert(inventory, {
-            item = randomItem.item,
-            label = randomItem.label,
-            qty = quantity,
-            legal = not isItemIllegal(randomItem.item)
-        })
+        if chosen then
+            local quantity = 1
+            if not chosen.isWeapon then
+                quantity = math.random(Config.itemQuantity.min or 1, Config.itemQuantity.max or 5)
+            end
+
+            table.insert(inventory, {
+                item = chosen.item,
+                label = chosen.label,
+                qty = quantity,
+                legal = not isItemIllegal(chosen.item)
+            })
+        end
     end
 
     return inventory
@@ -456,84 +539,40 @@ local function isPlayerNearNpc(src, netId, maxDistance)
     return dist <= maxDistance
 end
 
--- Initialize on resource start
-AddEventHandler('onResourceStart', function(resourceName)
-    if GetCurrentResourceName() ~= resourceName then return end
-    buildLookupTables()
+-- Is the source a police officer?
+local function isPolice(src)
+    local Player = GetPlayer(src)
+    return Player and Player.PlayerData.job.name == "police", Player
+end
 
-    -- Log shared character pool status
-    if SharedCharacters and SharedCharacters.pool then
-        print('[dps-badpeds] Loaded ' .. #SharedCharacters.pool .. ' shared characters')
+-- ============================================================================
+-- INVENTORY HELPERS (stun gun issue/removal + evidence stash)
+-- ============================================================================
+
+local function giveStunGun(src, Player)
+    if Config.inventory == 'qs-inventory' then
+        exports['qs-inventory']:AddItem(src, 'weapon_stungun', 1)
     else
-        print('[dps-badpeds] WARNING: SharedCharacters pool not loaded!')
+        exports.ox_inventory:AddItem(src, 'weapon_stungun', 1)
     end
+end
 
-    -- Initialize jail cache on startup
-    Citizen.SetTimeout(1000, function()
-        refreshJailCache()
-    end)
-
-    -- Delay item loading to ensure inventory resource is ready
-    Citizen.SetTimeout(2000, function()
-        getFilteredItemPool()
-    end)
-end)
-
-RegisterNetEvent('pedInteraction:request')
-AddEventHandler('pedInteraction:request', function(netId)
-    local src = source
-
-    if not validatePedNetId(netId) then return end
-    if not isPlayerNearNpc(src, netId, 5.0) then return end
-
-    if activeInteractions[src] then
-      TriggerClientEvent('npc:closeMenu', src, { npc = NetworkGetEntityFromNetworkId(netId) })
+local function removeStunGun(src, Player)
+    if Config.inventory == 'qs-inventory' then
+        exports['qs-inventory']:RemoveItem(src, 'weapon_stungun', 1)
+    else
+        exports.ox_inventory:RemoveItem(src, 'weapon_stungun', 1)
     end
+end
 
-    if npcLocks[netId] and npcLocks[netId] ~= src then
-        TriggerClientEvent('QBCore:Notify', src, 'This pedestrian is already being interacted with.', 'error')
-        return
-    end
-
-    activeInteractions[src] = netId
-    npcLocks[netId] = src
-    TriggerClientEvent('pedInteraction:approved', src, netId)
-end)
-
-RegisterNetEvent('addinventory')
-AddEventHandler('addinventory', function(netId)
-    local src = source
-
-    if not validatePedNetId(netId) then return end
-    if not isPlayerNearNpc(src, netId, 5.0) then return end
-
-    -- Generate inventory if not exists
-    if not npcInventories[netId] then
-        npcInventories[netId] = generateNpcInventory()
-    end
-
-    local npcItems = {}
-    local illegal = false
-
-    for idx, item in ipairs(npcInventories[netId]) do
-        if item.qty > 0 then
-            local legalTag = item.legal and "" or " ~r~(illegal)~s~"
-            table.insert(npcItems, {
-                header = (item.label or item.item) .. " x" .. item.qty .. legalTag,
-                txt = "Click to seize this item",
-                icon = item.legal and "fas fa-box" or "fas fa-exclamation-triangle",
-                params = {
-                    event = "npc:seizeItem",
-                    args = { netId = netId, itemIndex = idx }
-                }
-            })
-        end
-        if item.legal == false then illegal = true end
-    end
-
-    npcIllegal[netId] = illegal
-    TriggerClientEvent('addmenu', src, illegal, npcItems, netId)
-end)
+local evidenceStashRegistered = false
+local function ensureEvidenceStash()
+    if evidenceStashRegistered then return end
+    if Config.SeizeMode ~= 'evidence' then return end
+    local s = Config.evidenceStash or {}
+    exports.ox_inventory:RegisterStash(s.id or 'evidence-badpeds', s.label or 'Seized Evidence', s.slots or 100, s.maxWeight or 1000000)
+    evidenceStashRegistered = true
+end
 
 -- ============================================================================
 -- RECURRING CHARACTER ROTATION SYSTEM
@@ -587,13 +626,6 @@ local function getActiveCharacters()
         -- Reset random seed
         math.randomseed(os.time())
 
-        -- Log rotation
-        local names = {}
-        for _, char in ipairs(activeCharactersToday) do
-            table.insert(names, char.firstname .. ' ' .. char.lastname)
-        end
-        print('[dps-badpeds] Today\'s active characters: ' .. table.concat(names, ', '))
-
         -- Sync with dps-ainpcs if enabled
         if Config.recurringCharacters.shareWithAINpcs then
             local resourceState = GetResourceState('dps-ainpcs')
@@ -606,14 +638,11 @@ local function getActiveCharacters()
     return activeCharactersToday or (SharedCharacters and SharedCharacters.pool) or {}
 end
 
--- Check if a character is currently in jail (unavailable)
--- Uses cache for performance on high-pop servers
+-- Check if a character is currently in jail (unavailable) - uses cache for performance
 local function isCharacterInJail(firstname, lastname)
     if not Config.jailSystem or not Config.jailSystem.enabled then
         return false
     end
-
-    -- Use cached check for better performance
     return isCharacterJailedCached(firstname, lastname)
 end
 
@@ -635,7 +664,6 @@ local function getRecurringCharacter(gender)
     local validCharacters = {}
     for _, char in ipairs(activeChars) do
         if char.gender == gender then
-            -- Check if in jail
             if not isCharacterInJail(char.firstname, char.lastname) then
                 table.insert(validCharacters, char)
             end
@@ -645,6 +673,48 @@ local function getRecurringCharacter(gender)
     if #validCharacters == 0 then return nil end
 
     return validCharacters[math.random(#validCharacters)]
+end
+
+-- Assign a persistent identity (and possibly a recurring character) to an NPC.
+-- Called at interaction start so contraband generation and behaviour can use it.
+local function assignNpcIdentity(netId, gender, modelHash)
+    if modelHash then
+        npcModels[netId] = tostring(modelHash)
+    end
+
+    if npcNames[netId] then return end
+
+    local recurringChar = getRecurringCharacter(gender)
+    if recurringChar then
+        npcNames[netId] = {
+            firstname = recurringChar.firstname,
+            lastname = recurringChar.lastname,
+            gender = recurringChar.gender
+        }
+        npcCharacterData[netId] = recurringChar
+    else
+        local firstName
+        local lastName = Config.lastNames[math.random(#Config.lastNames)]
+        if gender == "MALE" then
+            firstName = Config.malefirstNames[math.random(#Config.malefirstNames)]
+        else
+            firstName = Config.femalefirstNames[math.random(#Config.femalefirstNames)]
+        end
+        npcNames[netId] = { firstname = firstName, lastname = lastName, gender = gender }
+    end
+end
+
+-- Build a behaviour profile (flee / intel / informant chances) from the NPC's
+-- personality. Random pedestrians fall back to sensible defaults.
+local function getBehaviorProfile(netId)
+    local char = npcCharacterData[netId]
+    local p = char and SharedCharacters and SharedCharacters.GetPersonality and SharedCharacters.GetPersonality(char.personality) or nil
+    return {
+        fleeChance = (p and p.fleeChance) or 50,
+        intelChance = (p and p.intelChance) or 70,
+        informantChance = (p and p.informantChance) or 40,
+        canGiveIntel = char and char.canGiveIntel, -- nil for random peds (treated as allowed)
+    }
 end
 
 -- Export for dps-ainpcs to check character availability (uses cache for performance)
@@ -660,7 +730,6 @@ end)
 -- Export for dps-ainpcs to notify when their NPC was arrested elsewhere
 exports('NotifyCharacterArrested', function(firstname, lastname)
     addToJailCache(firstname, lastname)
-    print('[dps-badpeds] Character arrested via external system: ' .. firstname .. ' ' .. lastname)
 end)
 
 -- Export to get the shared character pool
@@ -685,7 +754,118 @@ exports('RefreshJailCache', function()
     return true
 end)
 
-local npcCharacterData = {} -- Store recurring character data for NPCs
+-- ============================================================================
+-- INITIALIZATION
+-- ============================================================================
+
+AddEventHandler('onResourceStart', function(resourceName)
+    if GetCurrentResourceName() ~= resourceName then return end
+    buildLookupTables()
+    ensureEvidenceStash()
+
+    -- Log shared character pool status
+    if SharedCharacters and SharedCharacters.pool then
+        print('[dps-badpeds] Loaded ' .. #SharedCharacters.pool .. ' shared characters')
+    else
+        print('[dps-badpeds] WARNING: SharedCharacters pool not loaded!')
+    end
+
+    -- Initialize jail cache on startup
+    Citizen.SetTimeout(1000, function()
+        refreshJailCache()
+    end)
+
+    -- Delay item loading to ensure inventory resource is ready
+    Citizen.SetTimeout(2000, function()
+        getFilteredItemPool()
+    end)
+end)
+
+-- Clean up any state held by a player who disconnects mid-interaction
+AddEventHandler('playerDropped', function()
+    local src = source
+    local held = activeInteractions[src]
+    if held then
+        activeInteractions[src] = nil
+    end
+    for netId, holder in pairs(npcLocks) do
+        if holder == src then
+            npcLocks[netId] = nil
+        end
+    end
+end)
+
+-- ============================================================================
+-- INTERACTION EVENTS
+-- ============================================================================
+
+RegisterNetEvent('pedInteraction:request')
+AddEventHandler('pedInteraction:request', function(netId, gender, modelHash)
+    local src = source
+
+    if not validatePedNetId(netId) then return end
+    if not isPlayerNearNpc(src, netId, 5.0) then return end
+
+    local police, Player = isPolice(src)
+    if not Player or not police then return end
+
+    if activeInteractions[src] then
+        TriggerClientEvent('npc:closeMenu', src, { npc = NetworkGetEntityFromNetworkId(netId) })
+    end
+
+    if npcLocks[netId] and npcLocks[netId] ~= src then
+        NotifyClient(src, 'This pedestrian is already being interacted with.', 'error')
+        return
+    end
+
+    activeInteractions[src] = netId
+    npcLocks[netId] = src
+
+    -- Assign identity + recurring character up front so frisk contraband and
+    -- flee/intel behaviour all key off the same character.
+    assignNpcIdentity(netId, gender, modelHash)
+
+    TriggerClientEvent('pedInteraction:approved', src, netId, getBehaviorProfile(netId))
+end)
+
+RegisterNetEvent('addinventory')
+AddEventHandler('addinventory', function(netId)
+    local src = source
+
+    if not validatePedNetId(netId) then return end
+    if not isPlayerNearNpc(src, netId, 5.0) then return end
+
+    local police = isPolice(src)
+    if not police then return end
+    if activeInteractions[src] ~= netId then return end
+
+    -- Generate inventory if not exists
+    if not npcInventories[netId] then
+        npcInventories[netId] = generateNpcInventory(netId)
+    end
+
+    local npcItems = {}
+    local illegal = false
+
+    for idx, item in ipairs(npcInventories[netId]) do
+        if item.qty > 0 then
+            local legalTag = item.legal and "" or " ~r~(illegal)~s~"
+            table.insert(npcItems, {
+                header = (item.label or item.item) .. " x" .. item.qty .. legalTag,
+                txt = "Click to seize this item",
+                icon = item.legal and "fas fa-box" or "fas fa-exclamation-triangle",
+                params = {
+                    event = "npc:seizeItem",
+                    args = { netId = netId, itemIndex = idx }
+                }
+            })
+        end
+        if item.legal == false then illegal = true end
+    end
+
+    npcIllegal[netId] = illegal
+    TriggerClientEvent('addmenu', src, illegal, npcItems, netId)
+end)
 
 RegisterNetEvent("GetPedInfo")
 AddEventHandler("GetPedInfo", function(netId, ped, mugshot, mugshotname, gender, modelHash)
@@ -694,36 +874,12 @@ AddEventHandler("GetPedInfo", function(netId, ped, mugshot, mugshotname, gender,
     if not validatePedNetId(netId) then return end
     if not isPlayerNearNpc(src, netId, 5.0) then return end
 
-    -- Store model hash for jail records
-    if modelHash then
-        npcModels[netId] = tostring(modelHash)
-    end
+    local police = isPolice(src)
+    if not police then return end
+    if activeInteractions[src] ~= netId then return end
 
-    if not npcNames[netId] then
-        -- Check for recurring character first
-        local recurringChar = getRecurringCharacter(gender)
-
-        if recurringChar then
-            npcNames[netId] = {
-                firstname = recurringChar.firstname,
-                lastname = recurringChar.lastname,
-                gender = recurringChar.gender
-            }
-            -- Store full character data for behavior modifiers
-            npcCharacterData[netId] = recurringChar
-            print('[dps-badpeds] Recurring character spawned: ' .. recurringChar.firstname .. ' ' .. recurringChar.lastname)
-        else
-            -- Random NPC
-            local firstName
-            local lastName = Config.lastNames[math.random(#Config.lastNames)]
-            if gender == "MALE" then
-                firstName = Config.malefirstNames[math.random(#Config.malefirstNames)]
-            else
-                firstName = Config.femalefirstNames[math.random(#Config.femalefirstNames)]
-            end
-            npcNames[netId] = { firstname = firstName, lastname = lastName, gender = gender }
-        end
-    end
+    -- Identity is normally assigned at interaction start; ensure it exists here too.
+    assignNpcIdentity(netId, gender, modelHash)
 
     local firstname = npcNames[netId].firstname
     local lastname = npcNames[netId].lastname
@@ -735,7 +891,8 @@ AddEventHandler("GetPedInfo", function(netId, ped, mugshot, mugshotname, gender,
     local minutesRemaining = 0
 
     if Config.jailSystem and Config.jailSystem.enabled then
-        inJail, minutesRemaining = isNpcInJail(firstname, lastname)
+        -- Route the "in jail?" boolean through the in-memory cache (no per-lookup DB hit)
+        inJail = isCharacterJailedCached(firstname, lastname)
         arrestHistory = getNpcArrestHistory(firstname, lastname)
     end
 
@@ -746,13 +903,17 @@ AddEventHandler("GetPedInfo", function(netId, ped, mugshot, mugshotname, gender,
     TriggerClientEvent('addname', src, netId, mugshot, mugshotname, true, firstname, lastname, storedGender, arrestHistory, inJail, minutesRemaining, isKnownCriminal, characterData)
 end)
 
--- Seize item from NPC inventory and give to player
+-- ============================================================================
+-- SEIZURE: route contraband to an evidence stash or destroy + log it.
+-- NEVER give the item to the seizing officer (NPC inventories are random
+-- high-value items, so that would be an infinite farming exploit).
+-- ============================================================================
 RegisterNetEvent('npc:seizeItem:server')
 AddEventHandler('npc:seizeItem:server', function(netId, itemIndex)
     local src = source
-    local Player = QBCore.Functions.GetPlayer(src)
 
-    if not Player then return end
+    local police, Player = isPolice(src)
+    if not Player or not police then return end
     if not validatePedNetId(netId) then return end
     if not isPlayerNearNpc(src, netId, 5.0) then return end
     if activeInteractions[src] ~= netId then return end
@@ -762,123 +923,100 @@ AddEventHandler('npc:seizeItem:server', function(netId, itemIndex)
 
     local item = inventory[itemIndex]
     if item.qty <= 0 then
-        TriggerClientEvent('QBCore:Notify', src, 'This item has already been seized.', 'error')
+        NotifyClient(src, 'This item has already been seized.', 'error')
         return
     end
 
     local itemName = item.item
     local quantity = item.qty
-    local success = false
+    local seized = false
 
-    -- Add item based on inventory system
-    if Config.inventory == 'ox_inventory' or Config.inventory == 'ox-inventory' then
-        success = exports.ox_inventory:AddItem(src, itemName, quantity)
-    elseif Config.inventory == 'qs-inventory' then
-        success = exports['qs-inventory']:AddItem(src, itemName, quantity)
+    if Config.SeizeMode == 'evidence' then
+        ensureEvidenceStash()
+        local ok = exports.ox_inventory:AddItem(Config.evidenceStash.id, itemName, quantity)
+        seized = ok and ok ~= false
     else
-        -- qb-inventory or qbx default
-        success = Player.Functions.AddItem(itemName, quantity)
-        if success then
-            TriggerClientEvent('inventory:client:ItemBox', src, QBCore.Shared.Items[itemName], 'add', quantity)
-        end
+        -- 'destroy' mode: item is simply removed from the NPC and logged.
+        seized = true
     end
 
-    if success then
+    if seized then
         -- Remove from NPC inventory
         npcInventories[netId][itemIndex].qty = 0
-        TriggerClientEvent('QBCore:Notify', src, 'Seized ' .. quantity .. 'x ' .. (item.label or itemName), 'success')
-        -- Refresh the inventory menu
+
+        -- Audit log (who seized what, and where it went)
+        local officerName = Player.PlayerData.charinfo.firstname .. ' ' .. Player.PlayerData.charinfo.lastname
+        print(('[dps-badpeds] SEIZURE: %s (%s) seized %dx %s -> %s'):format(
+            officerName, Player.PlayerData.citizenid, quantity, itemName, Config.SeizeMode))
+
+        local dest = (Config.SeizeMode == 'evidence') and ' (evidence)' or ' (destroyed)'
+        NotifyClient(src, 'Seized ' .. quantity .. 'x ' .. (item.label or itemName) .. dest, 'success')
         TriggerClientEvent('npc:refreshInventory', src, netId)
     else
-        TriggerClientEvent('QBCore:Notify', src, 'Failed to seize item - inventory full?', 'error')
+        NotifyClient(src, 'Failed to seize item - evidence locker full?', 'error')
     end
 end)
 
-RegisterNetEvent('additem:qb')
-AddEventHandler('additem:qb', function(netId)
+-- Officer receives a stun gun for a foot pursuit (only when contraband present)
+RegisterNetEvent('additem:stungun')
+AddEventHandler('additem:stungun', function(netId)
     local src = source
-    local Player = QBCore.Functions.GetPlayer(src)
 
-    if not Player then return end
+    local police, Player = isPolice(src)
+    if not Player or not police then return end
     if not isPlayerNearNpc(src, netId, 10.0) then return end
     if activeInteractions[src] ~= netId then return end
 
-    if Player.PlayerData.job.name == "police" then
-        if npcIllegal[netId] then
-            if Config.inventory == 'qs-inventory' then
-                exports['qs-inventory']:AddItem(src, 'weapon_stungun', 1)
-            else
-                Player.Functions.AddItem('weapon_stungun', 1)
-                TriggerClientEvent('inventory:client:ItemBox', src, QBCore.Shared.Items['weapon_stungun'], 'add', 1)
-            end
-        end
-    end
-end)
-
-RegisterNetEvent('additem:ox')
-AddEventHandler('additem:ox', function(netId)
-    local src = source
-    local Player = QBCore.Functions.GetPlayer(src)
-
-    if not Player then return end
-    if not isPlayerNearNpc(src, netId, 10.0) then return end
-    if activeInteractions[src] ~= netId then return end
-
-    if Player.PlayerData.job.name == "police" then
-        if npcIllegal[netId] then
-            exports.ox_inventory:AddItem(src, 'weapon_stungun', 1)
-        end
+    if npcIllegal[netId] then
+        giveStunGun(src, Player)
     end
 end)
 
 RegisterNetEvent('arrestnpc')
-AddEventHandler('arrestnpc', function(netId, gaveIntel, intelData)
+AddEventHandler('arrestnpc', function(netId, gaveIntel, intelData, street)
     local src = source
-    local Player = QBCore.Functions.GetPlayer(src)
 
-    if not Player then return end
+    local police, Player = isPolice(src)
+    if not Player or not police then return end
     if not validatePedNetId(netId) then return end
     if not isPlayerNearNpc(src, netId, 10.0) then return end
     if activeInteractions[src] ~= netId then return end
 
-    if Player.PlayerData.job.name == "police" then
-        if npcIllegal[netId] then
-            -- Remove stun gun based on inventory system
-            if Config.inventory == 'ox_inventory' or Config.inventory == 'ox-inventory' then
-                exports.ox_inventory:RemoveItem(src, 'weapon_stungun', 1)
-            elseif Config.inventory == 'qs-inventory' then
-                exports['qs-inventory']:RemoveItem(src, 'weapon_stungun', 1)
-            else
-                -- qb-inventory or qbx default
-                Player.Functions.RemoveItem('weapon_stungun', 1)
-                TriggerClientEvent('inventory:client:ItemBox', src, QBCore.Shared.Items['weapon_stungun'], 'remove', 1)
-            end
-        end
-
-        -- Record arrest in database if jail system enabled
-        if Config.jailSystem and Config.jailSystem.enabled then
-            local jailHours = calculateJailTime(npcInventories[netId])
-            recordArrest(src, netId, jailHours, gaveIntel or false, intelData)
-
-            -- Notify about jail time
-            local npcName = npcNames[netId]
-            if npcName then
-                local realMinutes = jailHours * (Config.jailSystem.gameHourToRealMinutes or 2)
-                TriggerClientEvent('QBCore:Notify', src,
-                    npcName.firstname .. ' ' .. npcName.lastname .. ' sentenced to ' .. jailHours .. ' hours (~' .. realMinutes .. ' real minutes)',
-                    'success')
-            end
-        end
-
-        -- Cleanup
-        activeInteractions[src] = nil
-        npcLocks[netId] = nil
-        npcInventories[netId] = nil
-        npcNames[netId] = nil
-        npcIllegal[netId] = nil
-        npcModels[netId] = nil
-        TriggerClientEvent('deletenpc', src, netId)
+    if npcIllegal[netId] then
+        removeStunGun(src, Player)
     end
+
+    -- Record arrest in database if jail system enabled
+    if Config.jailSystem and Config.jailSystem.enabled then
+        local jailHours = calculateJailTime(npcInventories[netId])
+
+        -- Intel reduces the sentence
+        if gaveIntel and Config.jailSystem.intelReduction then
+            jailHours = math.max(1, math.floor(jailHours * Config.jailSystem.intelReduction))
+        end
+
+        recordArrest(src, netId, jailHours, gaveIntel or false, intelData, street)
+
+        -- Notify about jail time
+        local npcName = npcNames[netId]
+        if npcName then
+            local realMinutes = jailHours * (Config.jailSystem.gameHourToRealMinutes or 2)
+            local suffix = gaveIntel and ' [intel deal: reduced]' or ''
+            NotifyClient(src,
+                npcName.firstname .. ' ' .. npcName.lastname .. ' sentenced to ' .. jailHours .. ' hours (~' .. realMinutes .. ' real minutes)' .. suffix,
+                'success')
+        end
+    end
+
+    -- Cleanup
+    activeInteractions[src] = nil
+    npcLocks[netId] = nil
+    npcInventories[netId] = nil
+    npcNames[netId] = nil
+    npcIllegal[netId] = nil
+    npcModels[netId] = nil
+    npcCharacterData[netId] = nil
+    TriggerClientEvent('deletenpc', src, netId)
 end)
 
 -- ============================================================================
@@ -892,6 +1030,8 @@ AddEventHandler('npc:requestIntelOffer', function(netId)
 
     if not validatePedNetId(netId) then return end
     if not isPlayerNearNpc(src, netId, 5.0) then return end
+    local police = isPolice(src)
+    if not police then return end
     if activeInteractions[src] ~= netId then return end
 
     local npcName = npcNames[netId]
@@ -913,10 +1053,18 @@ AddEventHandler('npc:requestIntelOffer', function(netId)
         end
     end
 
-    -- 70% chance NPC has useful intel
-    local hasIntel = math.random(100) <= 70
-    local intelContent = nil
+    -- Chance NPC has useful intel is driven by personality (intelChance);
+    -- characters flagged canGiveIntel = false never talk.
+    local char = npcCharacterData[netId]
+    local hasIntel
+    if char and char.canGiveIntel == false then
+        hasIntel = false
+    else
+        local profile = getBehaviorProfile(netId)
+        hasIntel = math.random(100) <= (profile.intelChance or 70)
+    end
 
+    local intelContent = nil
     if hasIntel then
         intelContent = generateIntelContent(intelType)
     end
@@ -931,6 +1079,8 @@ AddEventHandler('npc:acceptIntelDeal', function(netId, intelType, intelContent)
 
     if not validatePedNetId(netId) then return end
     if not isPlayerNearNpc(src, netId, 5.0) then return end
+    local police, Player = isPolice(src)
+    if not Player or not police then return end
     if activeInteractions[src] ~= netId then return end
 
     local npcName = npcNames[netId]
@@ -944,18 +1094,17 @@ AddEventHandler('npc:acceptIntelDeal', function(netId, intelType, intelContent)
     if Config.aiIntegration and Config.aiIntegration.enabled then
         local resourceState = GetResourceState('dps-ainpcs')
         if resourceState == 'started' then
-            -- Try to record in dps-ainpcs intel system
             TriggerEvent('dps-ainpcs:server:recordIntel', {
                 source = npcName.firstname .. ' ' .. npcName.lastname,
                 type = intelType,
                 content = intelContent,
                 reliability = 3,
-                officerId = QBCore.Functions.GetPlayer(src).PlayerData.citizenid
+                officerId = Player.PlayerData.citizenid
             })
         end
     end
 
-    TriggerClientEvent('QBCore:Notify', src, 'Intel recorded. NPC will receive reduced sentence.', 'success')
+    NotifyClient(src, 'Intel recorded. NPC will receive reduced sentence.', 'success')
 end)
 
 -- Player offers to recruit NPC as informant
@@ -965,13 +1114,23 @@ AddEventHandler('npc:offerInformantDeal', function(netId)
 
     if not validatePedNetId(netId) then return end
     if not isPlayerNearNpc(src, netId, 5.0) then return end
+    local police = isPolice(src)
+    if not police then return end
     if activeInteractions[src] ~= netId then return end
 
     local npcName = npcNames[netId]
     if not npcName then return end
 
-    -- 40% chance they accept being an informant
-    local accepts = math.random(100) <= 40
+    -- Willingness to become an informant is driven by personality (informantChance);
+    -- characters flagged canGiveIntel = false refuse outright.
+    local char = npcCharacterData[netId]
+    local accepts
+    if char and char.canGiveIntel == false then
+        accepts = false
+    else
+        local profile = getBehaviorProfile(netId)
+        accepts = math.random(100) <= (profile.informantChance or 40)
+    end
 
     if accepts then
         local success, reason = recruitInformant(src, netId)
@@ -991,6 +1150,8 @@ AddEventHandler('npc:getAIContext', function(netId)
     local src = source
 
     if not validatePedNetId(netId) then return end
+    local police = isPolice(src)
+    if not police then return end
     if activeInteractions[src] ~= netId then return end
 
     local context = {
@@ -1003,7 +1164,7 @@ AddEventHandler('npc:getAIContext', function(netId)
     -- Add arrest history if available
     if Config.jailSystem and Config.jailSystem.enabled and context.name then
         context.arrestHistory = getNpcArrestHistory(context.name.firstname, context.name.lastname)
-        context.inJail, context.minutesRemaining = isNpcInJail(context.name.firstname, context.name.lastname)
+        context.inJail = isCharacterJailedCached(context.name.firstname, context.name.lastname)
     end
 
     TriggerClientEvent('npc:aiContextResponse', src, netId, context)
@@ -1015,7 +1176,15 @@ AddEventHandler('exitclearance', function(netId)
 
     if activeInteractions[src] == netId then
         activeInteractions[src] = nil
-        npcLocks[netId] = nil
+        if npcLocks[netId] == src then
+            npcLocks[netId] = nil
+        end
+        -- Full per-NPC cleanup so released peds don't leak state
+        npcInventories[netId] = nil
+        npcNames[netId] = nil
+        npcIllegal[netId] = nil
+        npcModels[netId] = nil
+        npcCharacterData[netId] = nil
         TriggerClientEvent('Cleartasks', src, netId)
     end
 end)
@@ -1027,6 +1196,8 @@ AddEventHandler('npc:requestInventoryRefresh', function(netId)
 
     if not validatePedNetId(netId) then return end
     if not isPlayerNearNpc(src, netId, 5.0) then return end
+    local police = isPolice(src)
+    if not police then return end
     if activeInteractions[src] ~= netId then return end
 
     local inventory = npcInventories[netId]

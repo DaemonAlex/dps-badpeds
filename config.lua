@@ -1,7 +1,25 @@
 Config = {}
 
-Config.target = 'ox-target' -- Options: 'qb-target', 'ox-target'
-Config.inventory = 'qs-inventory' -- Options: 'qb-inventory', 'qs-inventory', 'ox_inventory'
+Config.target = 'ox_target' -- Options: 'qb-target', 'ox_target'
+Config.inventory = 'ox_inventory' -- Options: 'qb-inventory', 'qs-inventory', 'ox_inventory'
+
+-- ============================================================================
+-- SEIZURE CONFIGURATION
+-- ============================================================================
+-- Contraband seized from NPCs must NOT go into the officer's own inventory
+-- (NPC inventories are randomised high-value items, so that would be an
+-- infinite money/weapon exploit). Instead we route seized items to an
+-- evidence stash, or simply destroy + log them.
+
+Config.SeizeMode = 'evidence' -- Options: 'evidence' (route to ox_inventory stash) | 'destroy' (remove + log only)
+
+-- ox_inventory stash used when Config.SeizeMode == 'evidence'
+Config.evidenceStash = {
+    id = 'evidence-badpeds', -- Stash identifier (a single shared evidence locker)
+    label = 'Seized Evidence',
+    slots = 100,
+    maxWeight = 1000000, -- grams
+}
 
 -- ============================================================================
 -- JAIL SYSTEM CONFIGURATION
