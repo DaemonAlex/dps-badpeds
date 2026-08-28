@@ -781,18 +781,37 @@ AddEventHandler('onResourceStart', function(resourceName)
     end)
 end)
 
+-- Server-side pending intel offers (src -> { netId, type, content }) so the
+-- accepted deal cannot be forged by the client, and one-shot flags.
+pendingIntelOffers = pendingIntelOffers or {}
+stunIssued = stunIssued or {}
+intelAttempted = intelAttempted or {}
+intelGiven = intelGiven or {}      -- src -> { netId, data } actually recorded
+
 -- Clean up any state held by a player who disconnects mid-interaction
 AddEventHandler('playerDropped', function()
     local src = source
     local held = activeInteractions[src]
     if held then
         activeInteractions[src] = nil
+        -- Drop the per-NPC state as well. FiveM recycles network ids, so leaving
+        -- these populated made a brand-new pedestrian inherit the old NPC's
+        -- identity, contraband inventory and illegal flag.
+        npcInventories[held] = nil
+        npcNames[held] = nil
+        npcIllegal[held] = nil
+        npcModels[held] = nil
+        npcCharacterData[held] = nil
     end
     for netId, holder in pairs(npcLocks) do
         if holder == src then
             npcLocks[netId] = nil
         end
     end
+    pendingIntelOffers[src] = nil
+    stunIssued[src] = nil
+    intelAttempted[src] = nil
+    intelGiven[src] = nil
 end)
 
 -- ============================================================================
@@ -809,8 +828,21 @@ AddEventHandler('pedInteraction:request', function(netId, gender, modelHash)
     local police, Player = isPolice(src)
     if not Player or not police then return end
 
-    if activeInteractions[src] then
-        TriggerClientEvent('npc:closeMenu', src, { npc = NetworkGetEntityFromNetworkId(netId) })
+    local prev = activeInteractions[src]
+    if prev then
+        -- Release the PREVIOUS ped's lock and state here; the client cannot be
+        -- relied on to send exitclearance for it (it was being handed a server
+        -- entity handle, and activeInteractions was overwritten before it replied).
+        if npcLocks[prev] == src then npcLocks[prev] = nil end
+        npcInventories[prev] = nil
+        npcNames[prev] = nil
+        npcIllegal[prev] = nil
+        npcModels[prev] = nil
+        npcCharacterData[prev] = nil
+        pendingIntelOffers[src] = nil
+        stunIssued[src] = nil
+        intelGiven[src] = nil
+        TriggerClientEvent('npc:closeMenu', src, { netId = prev })
     end
 
     if npcLocks[netId] and npcLocks[netId] ~= src then
@@ -967,7 +999,10 @@ AddEventHandler('additem:stungun', function(netId)
     if not isPlayerNearNpc(src, netId, 10.0) then return end
     if activeInteractions[src] ~= netId then return end
 
-    if npcIllegal[netId] then
+    -- One stun gun per interaction: this was unbounded, so an officer could spam
+    -- the event and farm weapon_stungun items into their inventory.
+    if npcIllegal[netId] and stunIssued[src] ~= netId then
+        stunIssued[src] = netId
         giveStunGun(src, Player)
     end
 end)
@@ -990,12 +1025,28 @@ AddEventHandler('arrestnpc', function(netId, gaveIntel, intelData, street)
     if Config.jailSystem and Config.jailSystem.enabled then
         local jailHours = calculateJailTime(npcInventories[netId])
 
+        -- Trust the SERVER's record of whether intel was actually exchanged, and
+        -- the content we generated - the client previously supplied both, so the
+        -- sentence reduction and the stored jail record were forgeable.
+        local given = intelGiven[src]
+        local realIntel = (given ~= nil and given.netId == netId)
+        local realIntelData = realIntel and given.data or nil
+        intelGiven[src] = nil
+
         -- Intel reduces the sentence
-        if gaveIntel and Config.jailSystem.intelReduction then
+        if realIntel and Config.jailSystem.intelReduction then
             jailHours = math.max(1, math.floor(jailHours * Config.jailSystem.intelReduction))
         end
 
-        recordArrest(src, netId, jailHours, gaveIntel or false, intelData, street)
+        -- Clamp the free-text street label before it reaches the DB
+        if type(street) ~= 'string' then
+            street = nil
+        elseif #street > 64 then
+            street = street:sub(1, 64)
+        end
+
+        local gaveIntel = realIntel
+        recordArrest(src, netId, jailHours, realIntel, realIntelData, street)
 
         -- Notify about jail time
         local npcName = npcNames[netId]
@@ -1057,9 +1108,16 @@ AddEventHandler('npc:requestIntelOffer', function(netId)
     -- characters flagged canGiveIntel = false never talk.
     local char = npcCharacterData[netId]
     local hasIntel
-    if char and char.canGiveIntel == false then
+    -- One roll per player+ped: without this the client could re-invoke until the
+    -- personality chance came up, making intelChance meaningless.
+    local rollKey = tostring(src) .. ':' .. tostring(netId)
+    if intelAttempted[src] == rollKey then
+        hasIntel = pendingIntelOffers[src] ~= nil and pendingIntelOffers[src].netId == netId
+    elseif char and char.canGiveIntel == false then
+        intelAttempted[src] = rollKey
         hasIntel = false
     else
+        intelAttempted[src] = rollKey
         local profile = getBehaviorProfile(netId)
         hasIntel = math.random(100) <= (profile.intelChance or 70)
     end
@@ -1068,6 +1126,10 @@ AddEventHandler('npc:requestIntelOffer', function(netId)
     if hasIntel then
         intelContent = generateIntelContent(intelType)
     end
+
+    -- Remember what WE offered so acceptIntelDeal cannot be handed forged
+    -- type/content by the client, and so the roll cannot be re-rolled.
+    pendingIntelOffers[src] = hasIntel and { netId = netId, intelType = intelType, content = intelContent } or nil
 
     TriggerClientEvent('npc:intelOfferResponse', src, netId, hasIntel, intelType, intelContent, npcName)
 end)
@@ -1085,6 +1147,16 @@ AddEventHandler('npc:acceptIntelDeal', function(netId, intelType, intelContent)
 
     local npcName = npcNames[netId]
     if not npcName then return end
+
+    -- Only honour an offer this server actually made, and use OUR type/content:
+    -- the client previously supplied both, so arbitrary rows (any length, any
+    -- text, even with no offer and no contraband) could be written to the DB.
+    local offer = pendingIntelOffers[src]
+    if not offer or offer.netId ~= netId or not offer.content then return end
+    pendingIntelOffers[src] = nil
+    intelType = offer.intelType
+    intelContent = offer.content
+    intelGiven[src] = { netId = netId, data = { type = intelType, content = intelContent } }
 
     -- Record the intel
     local locationHint = Config.intelLocations and Config.intelLocations[math.random(#Config.intelLocations)] or nil
