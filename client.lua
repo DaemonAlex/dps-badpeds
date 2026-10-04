@@ -15,7 +15,7 @@ end
 
 local function IsPolice()
     local data = GetPlayerData()
-    return data and data.job and data.job.name == 'police'
+    return data and data.job and data.job.type == 'leo' -- DPS 2026-09-25: any law-enforcement job (was LSPD only)
 end
 
 -- ox_lib notify wrapper (maps qb-style types to ox_lib types)
