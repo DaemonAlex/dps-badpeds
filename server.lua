@@ -542,7 +542,7 @@ end
 -- Is the source a police officer?
 local function isPolice(src)
     local Player = GetPlayer(src)
-    return Player and Player.PlayerData.job.name == "police", Player
+    return Player and Player.PlayerData.job.type == "leo", Player -- DPS 2026-09-25: any law-enforcement job (was LSPD only)
 end
 
 -- ============================================================================
