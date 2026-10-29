@@ -18,11 +18,14 @@ shared_scripts {
 
 server_scripts {
     '@oxmysql/lib/MySQL.lua', -- Required if jail system enabled
-    'server.lua'
+    'server.lua',
+    'server/pulse.lua',         -- DPS 2026-10-29 City Pulse (export GetPulse, /pulse)
+    'server/street.lua'         -- DPS 2026-10-29 corner crews, tips, road rage rolls
 }
-
 client_scripts {
-    'client.lua'
+    'client.lua',
+    'client/crews.lua',         -- DPS 2026-10-29 corner crews (pavement rule)
+    'client/roadrage.lua'       -- DPS 2026-10-29 road rage
 }
 
 files {

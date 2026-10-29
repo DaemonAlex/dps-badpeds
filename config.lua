@@ -280,3 +280,83 @@ Config.lastNames = {
     "De Santa", "Philips", "Clinton", "Townley", "Adams", "Nelson", "Hill",
     "Mitchell", "Roberts", "Carter", "Phillips", "Evans", "Turner", "Torres"
 }
+
+-- ============================================================================
+-- STREET LIFE (DPS 2026-10-29, Damon's brief): corner crews, the City Pulse,
+-- rough nights, road rage. Peds never spawn in the street (client/crews.lua).
+-- ============================================================================
+
+-- The City Pulse: how much fake crime the city needs right now. Recomputed every
+-- intervalMin minutes from players online, police on duty, gang members online and
+-- real incidents in the last 30 minutes (dps-pulse:incident). 1 = quiet city with
+-- people in it, 0 = busy with real crime, or nobody online.
+Config.pulse = {
+    intervalMin    = 5,
+    gangWeight     = 0.15,   -- each gang member online takes this much off the pulse
+    incidentWeight = 0.10,   -- each real incident in the last 30 min takes this much off
+    crowdAt        = 24,     -- above this many players, the city needs less filler
+    crowdMult      = 0.7,
+}
+
+-- Rough nights: rolled once at dusk (clients report the game hour), odds in percent,
+-- mult multiplies the pulse. Rough and wild nights weight crews towards Davis spots.
+Config.heat = {
+    duskHour = 20,
+    odds = { quiet = 25, normal = 50, rough = 20, wild = 5 },
+    mult = { quiet = 0.6, normal = 1.0, rough = 1.5, wild = 2.2 },
+}
+
+Config.crews = {
+    spawnRange   = 150.0,
+    despawnRange = 200.0,
+    floor        = 0.2,     -- no crews at all under this effective pulse
+    carryChance  = 60,      -- % of crew peds carrying contraband (random peds keep their own roll)
+    copRange     = 15.0,    -- a cop this close makes them react
+    react        = { walk = 30, flee = 10 }, -- % walk off / % bolt; the rest pocket their hands
+    models = { 'g_m_y_ballaeast_01', 'g_m_y_ballaorig_01', 'g_m_y_famca_01', 'g_m_y_famfor_01', 'g_m_y_mexgoon_01', 'g_m_y_mexgoon_02',
+               'g_m_y_korean_01', 'g_m_y_korlieut_01', 'g_m_y_salvagoon_01', 'g_m_y_salvagoon_02', 'a_m_y_stbla_01', 'a_m_y_stlat_01', 'a_m_m_hillbilly_01', 'a_m_m_hillbilly_02' },
+    scenarios = { 'WORLD_HUMAN_DRUG_DEALER', 'WORLD_HUMAN_DRUG_DEALER_HARD', 'WORLD_HUMAN_HANG_OUT_STREET', 'WORLD_HUMAN_SMOKING', 'WORLD_HUMAN_LEANING' },
+    -- davis = true: the Davis-side blocks the rough nights lean on. Coordinates are the
+    -- block centre; the pavement snap places each ped. (approximate) = Damon's /spot wins.
+    spots = {
+        { label = 'Grove Street',                 coords = vector3(-120.0, -1620.0, 34.0), davis = true,  min = 2, max = 3, models = { 'g_m_y_famca_01', 'g_m_y_famfor_01', 'g_m_y_famdnf_01' } },
+        { label = 'Davis',                        coords = vector3(89.0, -1940.0, 20.7),   davis = true,  min = 2, max = 3, models = { 'g_m_y_ballaeast_01', 'g_m_y_ballaorig_01', 'g_m_y_ballasout_01' } },
+        { label = 'Rancho',                       coords = vector3(470.0, -1890.0, 25.0),  davis = true,  min = 2, max = 3, models = { 'g_m_y_mexgoon_01', 'g_m_y_mexgoon_02', 'g_m_y_mexgoon_03' } },
+        { label = 'El Burro Heights',             coords = vector3(1490.0, -2340.0, 55.0), davis = false, min = 2, max = 3 },
+        { label = 'Little Seoul',                 coords = vector3(-700.0, -900.0, 19.0),  davis = false, min = 2, max = 3, models = { 'g_m_y_korean_01', 'g_m_y_korean_02', 'g_m_y_korlieut_01' } },
+        { label = 'Chamberlain Hills',            coords = vector3(-175.0, -1571.0, 34.0), davis = true,  min = 2, max = 3 },
+        { label = 'Strawberry',                   coords = vector3(245.0, -1735.0, 29.0),  davis = true,  min = 2, max = 3 },
+        { label = 'La Mesa',                      coords = vector3(741.0, -1520.0, 27.0),  davis = false, min = 2, max = 3 },
+        { label = 'Cypress Flats',                coords = vector3(835.0, -2135.0, 29.5),  davis = false, min = 2, max = 3 },
+        { label = 'Under the La Mesa overpass',   coords = vector3(725.0, -1275.0, 25.0),  davis = false, min = 2, max = 2 },
+        { label = 'Legion Square parking',        coords = vector3(215.0, -785.0, 31.0),   davis = false, min = 2, max = 2, nightOnly = true },
+        { label = 'Behind the Vanilla Unicorn',   coords = vector3(140.0, -1270.0, 29.0),  davis = false, min = 2, max = 2 },
+        { label = 'Sandy outskirts trailers',     coords = vector3(2700.0, 3400.0, 55.0),  davis = false, min = 2, max = 3, models = { 'a_m_m_hillbilly_01', 'a_m_m_hillbilly_02', 'a_m_y_hippy_01' } },
+        { label = 'Stab City trailer park (approximate)', coords = vector3(60.0, 3700.0, 40.0), davis = false, min = 3, max = 4, models = { 'g_m_y_lost_01', 'g_m_y_lost_02', 'g_m_y_lost_03', 'a_m_m_hillbilly_02' } },
+        { label = 'Paleto back lots (approximate)', coords = vector3(-200.0, 6260.0, 31.0), davis = false, min = 2, max = 2, models = { 'a_m_m_hillbilly_01', 'a_m_m_hillbilly_02' } },
+    },
+    -- Police tips: random, driven by the pulse, never clocked. At effective pulse 1 the
+    -- average gap is meanMinAtFull minutes; never two inside minGapMin; none under floor.
+    tips = {
+        meanMinAtFull = 60, minGapMin = 20, floor = 0.2, priority = 2, type = 'disturbance',
+        title = 'Suspicious activity reported',
+        description = 'Caller reports a group loitering and dealing on the corner.',
+    },
+}
+
+-- Road rage: bump an occupied NPC car and sometimes the driver snaps.
+Config.roadRage = {
+    enabled         = true,
+    baseChance      = 8,        -- % per bump, times the night's heat, scaled by the pulse (floor 0.25)
+    cooldownMs      = 600000,   -- one per player per ten minutes at most
+    durationMs      = 90000,    -- he gives up after this
+    breakOffM       = 200.0,    -- or once you are this far away
+    bailDelayMs     = 3000,     -- you get out, he follows this much later
+    armedChanceWild = 20,       -- % armed with a pistol, wild nights only
+}
+
+Config.dispatch.roadRage = {
+    enabled = true, priority = 3, type = 'shooting',
+    title = 'Road rage, shots fired',
+    description = 'Caller reports an armed driver attacking a motorist after a collision.',
+}
