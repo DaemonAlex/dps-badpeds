@@ -118,8 +118,17 @@ lib.callback.register('dps-badpeds:patrol:roll', function(src)
     local p = exports['dps-badpeds']:GetPulse()
     if (p.inputs and p.inputs.players or 0) == 0 then return false end
     if (p.inputs and p.inputs.cops or 0) > (cfg.maxCopsOnDuty or 3) then return false end
-    local mean = (cfg.meanMin or 25) / math.max(0.25, p.effective or 0.25)
+    local hot = false
+    local ped = GetPlayerPed(src)
+    if ped and ped > 0 then
+        local c = GetEntityCoords(ped)
+        for _, s in ipairs((Config.crews or {}).spots or {}) do
+            if #(c - s.coords) < (cfg.hotRadius or 250.0) then hot = true break end
+        end
+    end
+    local mean = (cfg.meanMin or 15) / math.max(0.25, p.effective or 0.25)
+    if hot then mean = mean / (cfg.hotMult or 2.5) end
     if math.random() > 1.0 / mean then return false end
     patrolAt[src] = now
-    return true
+    return { hot = hot }
 end)

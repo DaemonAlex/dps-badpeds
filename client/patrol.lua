@@ -12,7 +12,7 @@ local function cleanup()
     car, cop = nil, nil
 end
 
-local function pickUnit(mc)
+local function pickUnit(mc, hot)
     -- weighted pick among units that have a base inside the band; remember the base
     local lo = (P.baseBand and P.baseBand[1]) or 180.0
     local hi = (P.baseBand and P.baseBand[2]) or 650.0
@@ -24,8 +24,10 @@ local function pickUnit(mc)
             if d >= lo and d <= hi then near[#near + 1] = b end
         end
         if #near > 0 then
-            total = total + (u.weight or 1)
-            pool[#pool + 1] = { u = u, bases = near, w = u.weight or 1 }
+            local w = u.weight or 1
+            if hot and u.leo then w = w * ((P.hotLeoBias or 3)) end
+            total = total + w
+            pool[#pool + 1] = { u = u, bases = near, w = w }
         end
     end
     if total == 0 then return nil end
@@ -36,10 +38,10 @@ local function pickUnit(mc)
     end
 end
 
-local function spawnPatrol()
+local function spawnPatrol(hot)
     local me = PlayerPedId()
     local mc = GetEntityCoords(me)
-    local unit, base = pickUnit(mc)
+    local unit, base = pickUnit(mc, hot)
     local sx, sy, sz
     if base then
         sx, sy, sz = base.x, base.y, base.z
@@ -86,7 +88,7 @@ CreateThread(function()
         Wait(60000)
         if (P.enabled ~= false) and not car and not IsPedDeadOrDying(PlayerPedId(), true) then
             local ok = lib.callback.await('dps-badpeds:patrol:roll', false)
-            if ok then spawnPatrol() end
+            if ok then spawnPatrol(type(ok) == "table" and ok.hot) end
         end
     end
 end)

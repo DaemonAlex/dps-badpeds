@@ -379,14 +379,20 @@ Config.vibePatrol = {
     despawnDist   = 500.0,
     lifeSec       = 240,
     maxCopsOnDuty = 3,                 -- more real cops than this on duty = no fake patrols
+    -- Crime-prone areas get a heavier police presence: near any corner-crew spot
+    -- (Davis, Grove, Rancho, the gang blocks, Stab City...) passes come more often
+    -- and lean hard toward LEO units.
+    hotRadius     = 250.0,             -- this close to a Config.crews spot = hot zone
+    hotMult       = 2.5,               -- passes this much more often in a hot zone
+    hotLeoBias    = 3,                 -- LEO unit weight multiplied by this in a hot zone
     units = {
-        { label = 'LSPD cruiser',   model = 'hvpolice3',       driver = 's_m_y_cop_01',       weight = 5, speed = 27.0, quietSpeed = 16.0, sirenChance = 25,
+        { label = 'LSPD cruiser',   leo = true, model = 'hvpolice3',       driver = 's_m_y_cop_01',       weight = 5, speed = 27.0, quietSpeed = 16.0, sirenChance = 25,
           bases = { vec3(428.2, -984.3, 29.8),    -- Mission Row
                     vec3(360.9, -1584.7, 29.3),   -- Davis
                     vec3(638.2, 1.7, 82.8),       -- Vinewood
                     vec3(826.4, -1289.9, 28.2),   -- La Mesa
                     vec3(-1108.4, -845.3, 19.3) } }, -- Vespucci
-        { label = 'BCSO sheriff',   model = 'sheriff',         driver = 's_m_y_sheriff_01',   weight = 3, speed = 26.0, quietSpeed = 16.0, sirenChance = 25,
+        { label = 'BCSO sheriff',   leo = true, model = 'sheriff',         driver = 's_m_y_sheriff_01',   weight = 3, speed = 26.0, quietSpeed = 16.0, sirenChance = 25,
           bases = { vec3(1853.1, 3686.6, 34.3),   -- Sandy Shores SO
                     vec3(-443.3, 6015.6, 31.7) } },  -- Paleto Bay SO
         { label = 'LSFD ambulance', model = 'hvfdambulance',   driver = 's_m_m_paramedic_01', weight = 3, speed = 24.0, quietSpeed = 15.0, sirenChance = 70,
