@@ -372,6 +372,7 @@ Config.dispatch.roadRage = {
 -- SASP has no model in the fleet yet; add a unit here when one lands.
 Config.vibePatrol = {
     enabled       = true,
+    debug         = false,             -- set true to print every roll verdict to the server console
     meanMin       = 15,                -- average minutes between passes per player at full pulse
     minGapMin     = 8,                 -- never two passes inside this, per player
     baseBand      = { 180.0, 650.0 },  -- a unit rolls only if one of its stations is this far from you
@@ -386,7 +387,7 @@ Config.vibePatrol = {
     hotMult       = 2.5,               -- passes this much more often in a hot zone
     hotLeoBias    = 3,                 -- LEO unit weight multiplied by this in a hot zone
     units = {
-        { label = 'LSPD cruiser',   leo = true, model = 'hvpolice3',       driver = 's_m_y_cop_01',       weight = 5, speed = 27.0, quietSpeed = 16.0, sirenChance = 25,
+        { label = 'LSPD cruiser',   leo = true, model = 'hvpolice3', livery = 0, colors = {0, 0},       driver = 's_m_y_cop_01',       weight = 5, speed = 27.0, quietSpeed = 16.0, sirenChance = 25,
           bases = { vec3(428.2, -984.3, 29.8),    -- Mission Row
                     vec3(360.9, -1584.7, 29.3),   -- Davis
                     vec3(638.2, 1.7, 82.8),       -- Vinewood
@@ -395,13 +396,13 @@ Config.vibePatrol = {
         { label = 'BCSO sheriff',   leo = true, model = 'sheriff',         driver = 's_m_y_sheriff_01',   weight = 3, speed = 26.0, quietSpeed = 16.0, sirenChance = 25,
           bases = { vec3(1853.1, 3686.6, 34.3),   -- Sandy Shores SO
                     vec3(-443.3, 6015.6, 31.7) } },  -- Paleto Bay SO
-        { label = 'LSFD ambulance', model = 'hvfdambulance',   driver = 's_m_m_paramedic_01', weight = 3, speed = 24.0, quietSpeed = 15.0, sirenChance = 70,
+        { label = 'LSFD ambulance', model = 'hvfdambulance', livery = 0,   driver = 's_m_m_paramedic_01', weight = 3, speed = 24.0, quietSpeed = 15.0, sirenChance = 70,
           bases = { vec3(294.8, -574.1, 43.2),    -- Pillbox bay
                     vec3(-449.7, -340.8, 34.5) } },  -- Mount Zonah
-        { label = 'SAMS ambulance', model = 'hvsamsambulance', driver = 's_m_m_paramedic_01', weight = 2, speed = 24.0, quietSpeed = 15.0, sirenChance = 70,
+        { label = 'SAMS ambulance', model = 'hvsamsambulance', livery = 0, driver = 's_m_m_paramedic_01', weight = 2, speed = 24.0, quietSpeed = 15.0, sirenChance = 70,
           bases = { vec3(1839.6, 3672.9, 34.3),   -- Sandy medical
                     vec3(-247.8, 6331.1, 32.4) } },  -- Paleto care centre
-        { label = 'Fire engine',    model = 'hvfiretruk',      driver = 's_m_y_fireman_01',   weight = 1, speed = 20.0, quietSpeed = 13.0, sirenChance = 60,
+        { label = 'Fire engine',    model = 'hvfiretruk', livery = 0,      driver = 's_m_y_fireman_01',   weight = 1, speed = 20.0, quietSpeed = 13.0, sirenChance = 60,
           bases = { vec3(199.5, -1643.4, 28.8),   -- Davis FD
                     vec3(1193.5, -1464.6, 34.9),  -- El Burro FD
                     vec3(-635.5, -120.6, 38.0),   -- Rockford FD

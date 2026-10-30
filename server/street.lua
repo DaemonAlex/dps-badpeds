@@ -110,14 +110,17 @@ end)
 -- Vibe patrol roll (DPS 2026-10-30): pulse-scaled, per-player gap, stands down
 -- when enough real cops are on duty. The client asks once a minute.
 local patrolAt = {}
+local function vdbg(src, msg)
+    if (Config.vibePatrol or {}).debug then print(("[vibe] src=%s %s"):format(src, msg)) end
+end
 lib.callback.register('dps-badpeds:patrol:roll', function(src)
     local cfg = Config.vibePatrol or {}
-    if cfg.enabled == false then return false end
+    if cfg.enabled == false then vdbg(src, "no: disabled") return false end
     local now = os.time()
-    if patrolAt[src] and now - patrolAt[src] < (cfg.minGapMin or 10) * 60 then return false end
+    if patrolAt[src] and now - patrolAt[src] < (cfg.minGapMin or 10) * 60 then vdbg(src, "no: gap") return false end
     local p = exports['dps-badpeds']:GetPulse()
-    if (p.inputs and p.inputs.players or 0) == 0 then return false end
-    if (p.inputs and p.inputs.cops or 0) > (cfg.maxCopsOnDuty or 3) then return false end
+    if (p.inputs and p.inputs.players or 0) == 0 then vdbg(src, "no: pulse sees 0 players") return false end
+    if (p.inputs and p.inputs.cops or 0) > (cfg.maxCopsOnDuty or 3) then vdbg(src, "no: real cops on") return false end
     local hot = false
     local ped = GetPlayerPed(src)
     if ped and ped > 0 then
@@ -128,7 +131,12 @@ lib.callback.register('dps-badpeds:patrol:roll', function(src)
     end
     local mean = (cfg.meanMin or 15) / math.max(0.25, p.effective or 0.25)
     if hot then mean = mean / (cfg.hotMult or 2.5) end
-    if math.random() > 1.0 / mean then return false end
+    if math.random() > 1.0 / mean then vdbg(src, ("no: dice (eff %.2f mean %.1f hot %s)"):format(p.effective or -1, mean, tostring(hot))) return false end
     patrolAt[src] = now
+    vdbg(src, ("YES: patrol rolls (hot %s)"):format(tostring(hot)))
     return { hot = hot }
+end)
+
+RegisterNetEvent('dps-badpeds:patrol:hello', function()
+    print(("[vibe] client %s: patrol module alive"):format(source))
 end)

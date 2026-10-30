@@ -11,9 +11,11 @@ local pending = {}      -- idx -> true while a claim is in flight
 local lastHourSent = -1
 
 local function pavementSpot(x, y, z)
-    local ok, px, py, pz = GetSafeCoordForPed(x, y, z, true, 16)
-    if not ok then ok, px, py, pz = GetSafeCoordForPed(x, y, z, false, 16) end
-    if not ok then return nil end
+    -- GetSafeCoordForPed returns (bool, vector3) on this build, not four numbers
+    local ok, safe = GetSafeCoordForPed(x, y, z, true, 16)
+    if not ok then ok, safe = GetSafeCoordForPed(x, y, z, false, 16) end
+    if not ok or not safe then return nil end
+    local px, py, pz = safe.x, safe.y, safe.z
     -- GetClosestVehicleNodeWithHeading returns (bool, vector3, heading) on this build
     -- (matches dps-gangwars); wrap it so a pathfind-not-ready fault can't crash the thread.
     local got, found, node = pcall(GetClosestVehicleNodeWithHeading, px, py, pz, 1, 3.0, 0)

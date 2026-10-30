@@ -65,6 +65,15 @@ local function spawnPatrol(hot)
     cop = CreatePedInsideVehicle(car, 6, pmodel, -1, false, true)
     SetModelAsNoLongerNeeded(vmodel); SetModelAsNoLongerNeeded(pmodel)
     if not DoesEntityExist(cop) then cleanup() return end
+    SetPedDefaultComponentVariation(cop)   -- the standard uniform, no odd variants
+    -- make it LOOK like the marked unit: pin livery and colours, clean paint
+    SetVehicleModKit(car, 0)
+    if unit.livery ~= nil then
+        SetVehicleLivery(car, unit.livery)
+        SetVehicleMod(car, 48, unit.livery, false)   -- packs that carry liveries as mod 48
+    end
+    if unit.colors then SetVehicleColours(car, unit.colors[1], unit.colors[2]) end
+    SetVehicleDirtLevel(car, 0.0)
     SetBlockingOfNonTemporaryEvents(cop, true)   -- sees nothing, chases nobody
     SetEntityInvincible(cop, true)
     SetVehicleEngineOn(car, true, true, false)
@@ -84,6 +93,7 @@ end
 
 -- One roll a minute; the server says yes against the City Pulse and real-cop count.
 CreateThread(function()
+    TriggerServerEvent('dps-badpeds:patrol:hello')   -- debug heartbeat: proves this file runs on the client
     while true do
         Wait(60000)
         if (P.enabled ~= false) and not car and not IsPedDeadOrDying(PlayerPedId(), true) then
@@ -108,5 +118,11 @@ CreateThread(function()
         end
     end
 end)
+
+-- Test trigger (Damon): force one patrol now, hot-weighted, no dice.
+RegisterCommand('vibenow', function()
+    if car then cleanup() end
+    spawnPatrol(true)
+end, false)
 
 AddEventHandler('onResourceStop', function(r) if r == GetCurrentResourceName() then cleanup() end end)
