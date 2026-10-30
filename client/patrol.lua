@@ -66,11 +66,17 @@ local function spawnPatrol()
     SetBlockingOfNonTemporaryEvents(cop, true)   -- sees nothing, chases nobody
     SetEntityInvincible(cop, true)
     SetVehicleEngineOn(car, true, true, false)
-    SetVehicleHasMutedSirens(car, false)
-    SetVehicleSiren(car, true)                   -- full lights and wail
     SetDriverAbility(cop, 1.0)
     SetDriverAggressiveness(cop, 0.0)
-    TaskVehicleDriveWander(cop, car, unit.speed or 25.0, 787004)  -- code-3: runs reds, steers around traffic
+    if math.random(100) <= (unit.sirenChance or 30) then
+        -- code-3 pass: full lights and wail, runs reds, steers around traffic
+        SetVehicleHasMutedSirens(car, false)
+        SetVehicleSiren(car, true)
+        TaskVehicleDriveWander(cop, car, unit.speed or 25.0, 787004)
+    else
+        -- routine patrol: no siren, normal pace, stops at lights
+        TaskVehicleDriveWander(cop, car, unit.quietSpeed or 16.0, 786603)
+    end
     bornAt = GetGameTimer()
 end
 
