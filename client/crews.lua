@@ -14,14 +14,16 @@ local function pavementSpot(x, y, z)
     local ok, px, py, pz = GetSafeCoordForPed(x, y, z, true, 16)
     if not ok then ok, px, py, pz = GetSafeCoordForPed(x, y, z, false, 16) end
     if not ok then return nil end
-    local found, nx, ny = GetClosestVehicleNode(px, py, pz, 1, 3.0, 0)
-    if found then
-        local away = vector3(px - nx, py - ny, 0.0)
+    -- GetClosestVehicleNodeWithHeading returns (bool, vector3, heading) on this build
+    -- (matches dps-gangwars); wrap it so a pathfind-not-ready fault can't crash the thread.
+    local got, found, node = pcall(GetClosestVehicleNodeWithHeading, px, py, pz, 1, 3.0, 0)
+    if got and found and node then
+        local away = vector3(px - node.x, py - node.y, 0.0)
         local d = #away
         if d < 3.0 then
             if d < 0.1 then return nil end
             away = away / d
-            px, py = nx + away.x * 3.5, ny + away.y * 3.5
+            px, py = node.x + away.x * 3.5, node.y + away.y * 3.5
             local g, gz = GetGroundZFor_3dCoord(px, py, pz + 2.0, false)
             if g then pz = gz end
         end
