@@ -386,6 +386,13 @@ Config.vibePatrol = {
     hotRadius     = 250.0,             -- this close to a Config.crews spot = hot zone
     hotMult       = 2.5,               -- passes this much more often in a hot zone
     hotLeoBias    = 3,                 -- LEO unit weight multiplied by this in a hot zone
+    -- Going somewhere, not circling: every pass drives from its start PAST you to a
+    -- point this far beyond, then it is gone. Some siren passes are the call itself:
+    passBeyond    = 700.0,             -- destination this far past you (plus up to 400 random)
+    chaseChance   = 25,                -- % of LEO siren passes that become a pursuit
+    chaseCops     = { 1, 2 },          -- cruisers in a pursuit
+    chaseSpeed    = 36.0,
+    chaseSuspects = { 'sultan', 'buffalo', 'futo', 'ruiner' },
     units = {
         { label = 'LSPD cruiser',   leo = true, model = 'hvpolice3', livery = 0, colors = {0, 0},       driver = 's_m_y_cop_01',       weight = 5, speed = 27.0, quietSpeed = 16.0, sirenChance = 25,
           bases = { vec3(428.2, -984.3, 29.8),    -- Mission Row

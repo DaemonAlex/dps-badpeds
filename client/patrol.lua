@@ -1,19 +1,23 @@
--- Vibe patrol (DPS 2026-10-30, Damon): an emergency vehicle rolls through on full
--- lights and siren now and then, leaving from one of its real base stations. Pure
--- ambience, local to this client like the corner crews: the driver is blocked from
--- every event, so it is a prop in motion, not a responder.
+-- Vibe patrol (DPS 2026-10-30, Damon): emergency vehicles with somewhere to be.
+-- Every unit drives FROM its station TO a destination on the far side of you,
+-- so it passes through like a real cop going to a call, never circling. Some
+-- siren passes are the call itself: a suspect car flying past with cruisers in
+-- chase. All of it is local ambience: blocked peds, props in motion.
 
 local P = Config.vibePatrol or {}
-local car, cop, bornAt = nil, nil, 0
+local act = nil   -- { ents = {entity...}, lead = veh, bornAt, dest = vec3 }
 
 local function cleanup()
-    if cop and DoesEntityExist(cop) then SetEntityAsMissionEntity(cop, true, true); DeleteEntity(cop) end
-    if car and DoesEntityExist(car) then SetEntityAsMissionEntity(car, true, true); DeleteEntity(car) end
-    car, cop = nil, nil
+    if not act then return end
+    for _, e in ipairs(act.ents) do
+        if DoesEntityExist(e) then SetEntityAsMissionEntity(e, true, true); DeleteEntity(e) end
+    end
+    act = nil
 end
 
+local function track(e) act.ents[#act.ents + 1] = e end
+
 local function pickUnit(mc, hot)
-    -- weighted pick among units that have a base inside the band; remember the base
     local lo = (P.baseBand and P.baseBand[1]) or 180.0
     local hi = (P.baseBand and P.baseBand[2]) or 650.0
     local pool, total = {}, 0
@@ -25,7 +29,7 @@ local function pickUnit(mc, hot)
         end
         if #near > 0 then
             local w = u.weight or 1
-            if hot and u.leo then w = w * ((P.hotLeoBias or 3)) end
+            if hot and u.leo then w = w * (P.hotLeoBias or 3) end
             total = total + w
             pool[#pool + 1] = { u = u, bases = near, w = w }
         end
@@ -38,91 +42,146 @@ local function pickUnit(mc, hot)
     end
 end
 
-local function spawnPatrol(hot)
+---Spawn point on a road near `from`, and a destination PAST the player so the
+---route runs through their world and keeps going.
+local function routeFor(mc, from)
+    local got, found, node, heading = pcall(GetClosestVehicleNodeWithHeading, from.x, from.y, from.z, 0, 3.0, 0)
+    if not (got and found and node) then return nil end
+    local dir = mc - vector3(node.x, node.y, node.z)
+    local flat = vector3(dir.x, dir.y, 0.0)
+    local len = #flat
+    if len < 1.0 then return nil end
+    flat = flat / len
+    local reach = (P.passBeyond or 700.0) + math.random(0, 400)
+    local dest = mc + flat * reach          -- the far side of the player, roughly on the same line
+    return node, (heading or 0.0), vector3(dest.x, dest.y, mc.z)
+end
+
+local function spawnVehicle(model, driver, node, heading)
+    local vmodel, pmodel = joaat(model), joaat(driver)
+    if not IsModelInCdimage(vmodel) or not IsModelInCdimage(pmodel) then return nil end
+    lib.requestModel(vmodel, 8000); lib.requestModel(pmodel, 8000)
+    local veh = CreateVehicle(vmodel, node.x, node.y, node.z, heading, false, true)
+    if not DoesEntityExist(veh) then return nil end
+    local ped = CreatePedInsideVehicle(veh, 6, pmodel, -1, false, true)
+    SetModelAsNoLongerNeeded(vmodel); SetModelAsNoLongerNeeded(pmodel)
+    if not DoesEntityExist(ped) then SetEntityAsMissionEntity(veh, true, true); DeleteEntity(veh); return nil end
+    SetPedDefaultComponentVariation(ped)
+    SetEntityInvincible(ped, true)
+    SetVehicleEngineOn(veh, true, true, false)
+    SetDriverAbility(ped, 1.0)
+    return veh, ped
+end
+
+local function dressUnit(veh, unit)
+    SetVehicleModKit(veh, 0)
+    if unit.livery ~= nil then
+        SetVehicleLivery(veh, unit.livery)
+        SetVehicleMod(veh, 48, unit.livery, false)
+    end
+    if unit.colors then SetVehicleColours(veh, unit.colors[1], unit.colors[2]) end
+    SetVehicleDirtLevel(veh, 0.0)
+end
+
+local function spawnPatrol(hot, forceChase)
     local me = PlayerPedId()
     local mc = GetEntityCoords(me)
     local unit, base = pickUnit(mc, hot)
-    local sx, sy, sz
-    if base then
-        sx, sy, sz = base.x, base.y, base.z
-    else
-        -- nothing based nearby: a unit passing through, from a road this far out
+    if not unit then
         unit = (P.units or {})[1]
         if not unit then return end
         local lo = (P.fallbackDist and P.fallbackDist[1]) or 280.0
         local hi = (P.fallbackDist and P.fallbackDist[2]) or 380.0
         local ang = math.random() * 6.283
-        local d = lo + math.random() * (hi - lo)
-        sx, sy, sz = mc.x + math.cos(ang) * d, mc.y + math.sin(ang) * d, mc.z
+        base = vector3(mc.x + math.cos(ang) * (lo + math.random() * (hi - lo)),
+                       mc.y + math.sin(ang) * (lo + math.random() * (hi - lo)), mc.z)
     end
-    local got, found, node, heading = pcall(GetClosestVehicleNodeWithHeading, sx, sy, sz, 0, 3.0, 0)
-    if not (got and found and node) then return end
-    local vmodel, pmodel = joaat(unit.model), joaat(unit.driver)
-    if not IsModelInCdimage(vmodel) or not IsModelInCdimage(pmodel) then return end
-    lib.requestModel(vmodel, 8000); lib.requestModel(pmodel, 8000)
-    car = CreateVehicle(vmodel, node.x, node.y, node.z, heading or 0.0, false, true)
-    if not DoesEntityExist(car) then car = nil return end
-    cop = CreatePedInsideVehicle(car, 6, pmodel, -1, false, true)
-    SetModelAsNoLongerNeeded(vmodel); SetModelAsNoLongerNeeded(pmodel)
-    if not DoesEntityExist(cop) then cleanup() return end
-    SetPedDefaultComponentVariation(cop)   -- the standard uniform, no odd variants
-    -- make it LOOK like the marked unit: pin livery and colours, clean paint
-    SetVehicleModKit(car, 0)
-    if unit.livery ~= nil then
-        SetVehicleLivery(car, unit.livery)
-        SetVehicleMod(car, 48, unit.livery, false)   -- packs that carry liveries as mod 48
-    end
-    if unit.colors then SetVehicleColours(car, unit.colors[1], unit.colors[2]) end
-    SetVehicleDirtLevel(car, 0.0)
-    SetBlockingOfNonTemporaryEvents(cop, true)   -- sees nothing, chases nobody
-    SetEntityInvincible(cop, true)
-    SetVehicleEngineOn(car, true, true, false)
-    SetDriverAbility(cop, 1.0)
-    SetDriverAggressiveness(cop, 0.0)
-    if math.random(100) <= (unit.sirenChance or 30) then
-        -- code-3 pass: full lights and wail, runs reds, steers around traffic
-        SetVehicleHasMutedSirens(car, false)
-        SetVehicleSiren(car, true)
-        TaskVehicleDriveWander(cop, car, unit.speed or 25.0, 787004)
+    local node, heading, dest = routeFor(mc, base)
+    if not node then return end
+
+    local siren = forceChase or (math.random(100) <= (unit.sirenChance or 30))
+    local chase = unit.leo and siren and (forceChase or math.random(100) <= (P.chaseChance or 25))
+
+    act = { ents = {}, lead = nil, bornAt = GetGameTimer(), dest = dest }
+
+    if chase then
+        -- the call itself: a suspect car flying through with cruisers behind
+        local smodels = P.chaseSuspects or { 'sultan', 'buffalo', 'futo', 'ruiner' }
+        local sveh, sped = spawnVehicle(smodels[math.random(#smodels)], 'a_m_y_stlat_01', node, heading)
+        if not sveh then act = nil return end
+        track(sveh); track(sped)
+        SetVehicleColours(sveh, math.random(0, 159), 0)
+        SetBlockingOfNonTemporaryEvents(sped, true)
+        TaskVehicleDriveToCoordLongrange(sped, sveh, dest.x, dest.y, dest.z, P.chaseSpeed or 36.0, 787004, 25.0)
+        act.lead = sveh
+        local cops = (P.chaseCops and math.random(P.chaseCops[1], P.chaseCops[2])) or math.random(1, 2)
+        for i = 1, cops do
+            local back = vector3(node.x - math.sin(math.rad(heading)) * -(14 * i), node.y - math.cos(math.rad(heading)) * (14 * i), node.z)
+            local cveh, cped = spawnVehicle(unit.model, unit.driver, back, heading)
+            if cveh then
+                track(cveh); track(cped)
+                dressUnit(cveh, unit)
+                SetBlockingOfNonTemporaryEvents(cped, true)
+                SetVehicleHasMutedSirens(cveh, false)
+                SetVehicleSiren(cveh, true)
+                SetDriverAggressiveness(cped, 1.0)
+                TaskVehicleChase(cped, sped)
+                SetTaskVehicleChaseBehaviorFlag(cped, 32, true)   -- can ram
+                SetTaskVehicleChaseIdealPursuitDistance(cped, 8.0)
+            end
+        end
     else
-        -- routine patrol: no siren, normal pace, stops at lights
-        TaskVehicleDriveWander(cop, car, unit.quietSpeed or 16.0, 786603)
+        local veh, ped = spawnVehicle(unit.model, unit.driver, node, heading)
+        if not veh then act = nil return end
+        track(veh); track(ped)
+        dressUnit(veh, unit)
+        SetBlockingOfNonTemporaryEvents(ped, true)
+        SetDriverAggressiveness(ped, 0.0)
+        act.lead = veh
+        if siren then
+            SetVehicleHasMutedSirens(veh, false)
+            SetVehicleSiren(veh, true)
+            TaskVehicleDriveToCoordLongrange(ped, veh, dest.x, dest.y, dest.z, unit.speed or 25.0, 787004, 25.0)
+        else
+            TaskVehicleDriveToCoordLongrange(ped, veh, dest.x, dest.y, dest.z, unit.quietSpeed or 16.0, 786603, 25.0)
+        end
     end
-    bornAt = GetGameTimer()
 end
 
 -- One roll a minute; the server says yes against the City Pulse and real-cop count.
 CreateThread(function()
-    TriggerServerEvent('dps-badpeds:patrol:hello')   -- debug heartbeat: proves this file runs on the client
+    TriggerServerEvent('dps-badpeds:patrol:hello')
     while true do
         Wait(60000)
-        if (P.enabled ~= false) and not car and not IsPedDeadOrDying(PlayerPedId(), true) then
+        if (P.enabled ~= false) and not act and not IsPedDeadOrDying(PlayerPedId(), true) then
             local ok = lib.callback.await('dps-badpeds:patrol:roll', false)
             if ok then spawnPatrol(type(ok) == "table" and ok.hot) end
         end
     end
 end)
 
--- Watch the active patrol out of earshot, then let it go.
+-- Let the pass finish: gone when it reaches the call, leaves earshot, or times out.
 CreateThread(function()
     while true do
-        if car then
-            if not DoesEntityExist(car)
-               or #(GetEntityCoords(PlayerPedId()) - GetEntityCoords(car)) > (P.despawnDist or 500.0)
-               or GetGameTimer() - bornAt > (P.lifeSec or 240) * 1000 then
+        if act then
+            local lead = act.lead
+            if not lead or not DoesEntityExist(lead)
+               or #(GetEntityCoords(PlayerPedId()) - GetEntityCoords(lead)) > (P.despawnDist or 500.0)
+               or (act.dest and #(GetEntityCoords(lead) - act.dest) < 45.0)
+               or GetGameTimer() - act.bornAt > (P.lifeSec or 240) * 1000 then
                 cleanup()
             end
-            Wait(10000)
+            Wait(8000)
         else
             Wait(30000)
         end
     end
 end)
 
--- Test trigger (Damon): force one patrol now, hot-weighted, no dice.
-RegisterCommand('vibenow', function()
-    if car then cleanup() end
-    spawnPatrol(true)
+-- Test triggers (Damon): /vibenow = one pass now; /vibenow chase = a pursuit now.
+RegisterCommand('vibenow', function(_, args)
+    cleanup()
+    spawnPatrol(true, args and args[1] == 'chase')
 end, false)
 
 AddEventHandler('onResourceStop', function(r) if r == GetCurrentResourceName() then cleanup() end end)
