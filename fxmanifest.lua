@@ -25,7 +25,8 @@ server_scripts {
 client_scripts {
     'client.lua',
     'client/crews.lua',         -- DPS 2026-10-29 corner crews (pavement rule)
-    'client/roadrage.lua'       -- DPS 2026-10-29 road rage
+    'client/roadrage.lua',       -- DPS 2026-10-29 road rage
+    'client/patrol.lua'          -- DPS 2026-10-30 vibe patrol (sirens for the feel)
 }
 
 files {

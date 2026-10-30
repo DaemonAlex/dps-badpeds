@@ -360,3 +360,44 @@ Config.dispatch.roadRage = {
     title = 'Road rage, shots fired',
     description = 'Caller reports an armed driver attacking a motorist after a collision.',
 }
+
+-- Vibe patrol (DPS 2026-10-30, Damon): emergency vehicles roll through with lights
+-- and siren, purely for the feel of a living city ("I live in Chicago near a
+-- hospital, I hear sirens at least 4x a day"). Each unit leaves from one of its
+-- real stations, department-correct per our jobs canon: LSPD in the city, BCSO in
+-- the county, LSFD ambulance from the hospitals, SAMS in the county, fire engines
+-- from the fire houses. Pure ambience: nobody gets chased, nothing responds.
+-- SASP has no model in the fleet yet; add a unit here when one lands.
+Config.vibePatrol = {
+    enabled       = true,
+    meanMin       = 20,                -- average minutes between passes per player at full pulse
+    minGapMin     = 8,                 -- never two passes inside this, per player
+    baseBand      = { 180.0, 650.0 },  -- a unit rolls only if one of its stations is this far from you
+    fallbackDist  = { 280.0, 380.0 },  -- no station in the band: LSPD passes through from a road this far out
+    despawnDist   = 500.0,
+    lifeSec       = 240,
+    maxCopsOnDuty = 3,                 -- more real cops than this on duty = no fake patrols
+    units = {
+        { label = 'LSPD cruiser',   model = 'hvpolice3',       driver = 's_m_y_cop_01',       weight = 5, speed = 27.0,
+          bases = { vec3(428.2, -984.3, 29.8),    -- Mission Row
+                    vec3(360.9, -1584.7, 29.3),   -- Davis
+                    vec3(638.2, 1.7, 82.8),       -- Vinewood
+                    vec3(826.4, -1289.9, 28.2),   -- La Mesa
+                    vec3(-1108.4, -845.3, 19.3) } }, -- Vespucci
+        { label = 'BCSO sheriff',   model = 'sheriff',         driver = 's_m_y_sheriff_01',   weight = 3, speed = 26.0,
+          bases = { vec3(1853.1, 3686.6, 34.3),   -- Sandy Shores SO
+                    vec3(-443.3, 6015.6, 31.7) } },  -- Paleto Bay SO
+        { label = 'LSFD ambulance', model = 'hvfdambulance',   driver = 's_m_m_paramedic_01', weight = 3, speed = 24.0,
+          bases = { vec3(294.8, -574.1, 43.2),    -- Pillbox bay
+                    vec3(-449.7, -340.8, 34.5) } },  -- Mount Zonah
+        { label = 'SAMS ambulance', model = 'hvsamsambulance', driver = 's_m_m_paramedic_01', weight = 2, speed = 24.0,
+          bases = { vec3(1839.6, 3672.9, 34.3),   -- Sandy medical
+                    vec3(-247.8, 6331.1, 32.4) } },  -- Paleto care centre
+        { label = 'Fire engine',    model = 'hvfiretruk',      driver = 's_m_y_fireman_01',   weight = 1, speed = 20.0,
+          bases = { vec3(199.5, -1643.4, 28.8),   -- Davis FD
+                    vec3(1193.5, -1464.6, 34.9),  -- El Burro FD
+                    vec3(-635.5, -120.6, 38.0),   -- Rockford FD
+                    vec3(1690.5, 3585.3, 35.6),   -- Sandy FD
+                    vec3(-381.1, 6120.6, 31.5) } },  -- Paleto FD
+    },
+}

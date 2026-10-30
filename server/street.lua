@@ -106,3 +106,20 @@ RegisterNetEvent('dps-badpeds:roadrage:shots', function()
         end)
     end
 end)
+
+-- Vibe patrol roll (DPS 2026-10-30): pulse-scaled, per-player gap, stands down
+-- when enough real cops are on duty. The client asks once a minute.
+local patrolAt = {}
+lib.callback.register('dps-badpeds:patrol:roll', function(src)
+    local cfg = Config.vibePatrol or {}
+    if cfg.enabled == false then return false end
+    local now = os.time()
+    if patrolAt[src] and now - patrolAt[src] < (cfg.minGapMin or 10) * 60 then return false end
+    local p = exports['dps-badpeds']:GetPulse()
+    if (p.inputs and p.inputs.players or 0) == 0 then return false end
+    if (p.inputs and p.inputs.cops or 0) > (cfg.maxCopsOnDuty or 3) then return false end
+    local mean = (cfg.meanMin or 25) / math.max(0.25, p.effective or 0.25)
+    if math.random() > 1.0 / mean then return false end
+    patrolAt[src] = now
+    return true
+end)
