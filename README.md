@@ -9,12 +9,16 @@ A FiveM resource that allows police officers to interact with random pedestrian 
 - [Gameplay Flow](#gameplay-flow)
 - [Features](#features)
 - [File Structure](#file-structure)
+- [On its own, and with other scripts](#on-its-own-and-with-other-scripts)
 - [Dependencies](#dependencies)
 - [Configuration](#configuration)
 - [Technical Details](#technical-details)
 - [Potential Improvements](#potential-improvements)
 - [Integration with dps-ainpcs](#integration-with-dps-ainpcs)
 - [Installation](#installation)
+- [Recent changes](#recent-changes)
+- [Author](#author)
+- [Other DPS scripts](#other-dps-scripts)
 
 ---
 
@@ -29,6 +33,10 @@ This script gives police officers the ability to stop and interact with **any ra
 - Creates realistic patrol gameplay
 - Generates dynamic dispatch calls for other officers
 - Provides training scenarios for new officers
+
+- Makes the streets feel alive for everyone: corner crews on the gang blocks, drivers who snap after a crash, and emergency vehicles that pass through on their way to a call
+
+In short: it is for police who need something to do on a quiet shift, and for a city that should not feel empty when few players are on.
 
 ---
 
@@ -130,7 +138,7 @@ This script gives police officers the ability to stop and interact with **any ra
 | Network registration | Deferred: a ped is only registered as networked when an officer actually interacts (perf) |
 | Target pruning | Targets are removed when a ped despawns or leaves range, so handles don't leak |
 | Target integration | Works with ox_target (default) or qb-target |
-| Job restriction | Only visible to players with `police` job |
+| Job restriction | Only visible to players whose job has the type `leo` (any law-enforcement job) |
 
 ### 2. ID Card System
 | Feature | Description |
@@ -214,6 +222,19 @@ Random (non-recurring) pedestrians use safe defaults (fleeChance 50, intelChance
 | **Dynamic Dialogue** | AI-generated responses based on context |
 | **Fallback System** | Static dialogues if AI unavailable |
 
+### 8b. Street Life
+| Feature | Description |
+|---------|-------------|
+| **City Pulse** | One number for how much NPC crime the city needs right now. It drops when gang members are online or real incidents happen, and it is zero when nobody is online. Other scripts can read it with `exports['dps-badpeds']:GetPulse()` |
+| **Rough nights** | At dusk (20:00 game time) the night is rolled as quiet, normal, rough or wild. Rough and wild nights raise the pulse and lean on the Davis blocks |
+| **Corner crews** | Small groups of local NPCs stand on 15 gang-block corners. Police can talk to, frisk and arrest them with the normal flow. 60% carry contraband. When a cop comes close they pocket their hands, walk off or run |
+| **Police tips** | Now and then an anonymous caller reports a group dealing on a corner. Tips are random and never closer than 20 minutes apart |
+| **Road rage** | Bump an NPC car and the driver may snap. He chases and rams you. If you get out, he gets out too. On wild nights he may have a pistol |
+| **Vibe patrol** | Police cars, ambulances and fire engines drive past from their real stations to somewhere beyond you. Most police passes are quiet. Some run lights and siren, and some are a pursuit of a suspect car. Passes come more often near the gang blocks. They stop when more than 3 real officers are on duty |
+| **Pavement rule** | Crew NPCs are never placed in the road |
+
+Commands: `/pulse` shows the pulse and its inputs (console or the `command` ace). `/vibenow` forces one patrol pass for testing, and `/vibenow chase` forces a pursuit.
+
 ### 9. Security
 | Protection | Description |
 |------------|-------------|
@@ -234,6 +255,15 @@ dps-badpeds/
 │   ├── AI integration settings
 │   ├── Intel templates
 │   └── Dispatch configuration
+├── client/
+│   ├── crews.lua       # Corner crews
+│   ├── roadrage.lua    # Road rage
+│   └── patrol.lua      # Vibe patrol
+├── server/
+│   ├── pulse.lua       # City Pulse (export GetPulse, /pulse)
+│   └── street.lua      # Crew spots, police tips, road rage and patrol rolls
+├── shared/
+│   └── characters.lua  # Shared character pool (also loaded by dps-ainpcs)
 ├── client.lua          # Client logic (~835 lines)
 │   ├── NPC detection loop
 │   ├── Target registration
@@ -260,6 +290,22 @@ dps-badpeds/
 │   └── idcard.ytd      # ID card texture (106KB)
 └── README.md           # This file
 ```
+
+---
+
+## On its own, and with other scripts
+
+**On its own.** With qbx_core, ox_lib, ox_target, ox_inventory and oxmysql you get everything a police officer does with an NPC: stop, ID card, frisk, seize, chase, arrest, intel deals, informants and jail records. You also get the street life: the City Pulse, corner crews, road rage and the vibe patrol. Seized items go to an ox_inventory evidence stash. With no dispatch script running, no calls are sent and the rest works the same.
+
+**With a paid police computer (wasabi_mdt).** This is the default dispatch. Other officers see a call on the MDT when contraband is found ("Contraband Located"), when a suspect runs ("Foot Pursuit") and when an arrest is made ("Arrest Made"). The street life adds anonymous calls: a tip about a group dealing on a corner, and "Road rage, shots fired" when an armed driver opens fire. The script only sends calls through the wasabi_mdt `CreateDispatch` export. It reads nothing from the MDT and changes nothing in it, and it checks that wasabi_mdt is running first.
+
+**With another dispatch script (ps-dispatch or cd_dispatch).** Set `Config.dispatch.resource`. The three stop and arrest calls go out through that script's event. cd_dispatch is paid and ps-dispatch is free. The corner tips and the road rage call use the wasabi_mdt call format, so they are only confirmed to work with wasabi_mdt.
+
+**With a paid inventory (qs-inventory).** Set `Config.inventory = 'qs-inventory'`. The NPC's pockets are filled from the qs-inventory item list, and the stun gun for a chase is given and taken through it. The evidence stash is an ox_inventory feature, so ox_inventory is the tested setup.
+
+**With dps-ainpcs.** dps-ainpcs needs this script. Both use the character list in `shared/characters.lua`, so the known criminals police meet on the street are the same people players talk to as informants and dealers. When police arrest one of them here, this script tells dps-ainpcs, which ends any talk with that NPC. While the character is in jail, dps-ainpcs asks this script (`IsCharacterAvailable`) and keeps the NPC out of reach. The AI dialogue option (`Config.aiIntegration`) is off by default.
+
+**With dps-gangwars and dps-hookers.** These run next to this script with no direct link. The corner crews here stand on the same blocks as the gang NPCs from dps-gangwars, and the vibe patrol passes more often there.
 
 ---
 
@@ -384,7 +430,7 @@ npcLocks[netId] = playerSource            -- Who has this NPC locked?
 |---------|-------------|--------|
 | **Warrant Check** | Query MDT for active warrants on NPC name | Medium |
 | **Vehicle Stops** | Pull over NPCs in vehicles, search car | High |
-| **Multiple Jobs** | Support sheriff, state police, etc. | Easy |
+| **Multiple Jobs** | Done on 25 September 2026: any job with the type `leo` can use the script | Done |
 | **ox_lib Menu** | Modern menu instead of qb-menu | Easy |
 
 ### Medium Priority
@@ -497,12 +543,27 @@ Config.aiIntegration.enabled = false
 
 | Issue | Solution |
 |-------|----------|
-| Target not appearing | Check job is `police`, ensure ox_target running |
+| Target not appearing | Check your job has the type `leo`, ensure ox_target running |
 | Items not generating | Verify inventory resource name in config |
 | "Item does not exist" | Item spawn code not in your inventory |
 | Seized items vanish | Expected - they go to the `evidence-badpeds` stash (or are destroyed if `SeizeMode = 'destroy'`) |
 | Dispatch not sending | Check wasabi_mdt is running, dispatch enabled |
 | NPC not responding | Another officer may have it locked |
+
+---
+
+## Recent changes
+
+- **12 November 2026.** README: what it is for, how it works alone and with paid scripts, other DPS scripts. The job check text now matches the code.
+- **30 October 2026.** Vibe patrol added: police, ambulance and fire units drive through from their real stations to a point beyond the player. Most police passes are routine with no siren. Passes are heavier near the gang blocks. Some siren passes are a pursuit of a suspect car. `/vibenow` forces a pass for testing. The crew pavement check was fixed (it read the game's position result in the wrong shape and stopped the spawner).
+- **29 October 2026.** Street life added: the City Pulse (export `GetPulse`, `/pulse`), rough nights rolled at dusk, corner crews on 15 spots, random police tips and road rage.
+- **25 September 2026.** Police checks use the job type `leo`, so every law-enforcement job can use the script. It used to be the `police` job only.
+
+---
+
+## Author
+
+Made by [DaemonAlex](https://github.com/DaemonAlex) for DelPerroSands.
 
 ---
 
@@ -518,3 +579,30 @@ Config.aiIntegration.enabled = false
 Free to use and modify for personal or server use.
 Redistribution or resale requires permission from the author.
 
+## Other DPS scripts
+
+All of these are made for DelPerroSands and run together on one Qbox server. Each one works on
+its own. The ones marked "pairs with" do more when both are running.
+
+| Script | What it does |
+|---|---|
+| [dps-inventory](https://github.com/DaemonAlex/dps-inventory) | The inventory: ox_inventory with equipment slots, backpacks, armour plates and a self status panel, in the DelPerroSands colours. |
+| [dps-medical](https://github.com/DaemonAlex/dps-medical) | Patient records, illness and diagnostic tests. A companion to wasabi_ambulance. Pairs with dps-inventory: symptoms and diagnoses show on the status panel. |
+| [dps-insurance](https://github.com/DaemonAlex/dps-insurance) | Ties m-Insurance into the MDT, impound, hospital and medical chart. Pairs with dps-medical. |
+| [dps-studio](https://github.com/DaemonAlex/dps-studio) | Build rooms, doors and portals in game from one panel (`/studio`), with owners and managers so staff do not have to support them. |
+| [dps-shops](https://github.com/DaemonAlex/dps-shops) | Shop clerks who greet and react to a robbery, then player-owned shops. |
+| [dps-fleet](https://github.com/DaemonAlex/dps-fleet) | Vehicle browser and workshop on one panel: extras, liveries and mods for emergency vehicles. |
+| [dps-parking](https://github.com/DaemonAlex/dps-parking) | Parking with valet, impound, violations and reserved spots. |
+| [dps-vehiclepersistence](https://github.com/DaemonAlex/dps-vehiclepersistence) | Vehicles stay where they were parked. Pairs with dps-parking. |
+| [dps-towjob](https://github.com/DaemonAlex/dps-towjob) | Queue-based tow job with jg-mechanic integration. |
+| [dps-services](https://github.com/DaemonAlex/dps-services) | Request a tow and follow it live on the lb-phone and lb-tablet. Pairs with dps-towjob. |
+| [dps-autoshops](https://github.com/DaemonAlex/dps-autoshops) | Self-service repair shops when no mechanic is on duty. |
+| [dps-cityworker](https://github.com/DaemonAlex/dps-cityworker) | City infrastructure job and career. |
+| [dps-ainpcs](https://github.com/DaemonAlex/dps-ainpcs) | NPCs you can talk to, with trust, quests and intel. |
+| [dps-gangwars](https://github.com/DaemonAlex/dps-gangwars) | Ambient gang NPCs, territory population and war reinforcements. |
+| [dps-rotations](https://github.com/DaemonAlex/dps-rotations) | Moves dealers, harvests and other spots on a fixed schedule. |
+| [dps-trains](https://github.com/DaemonAlex/dps-trains) | The train system. Pairs with dps-trains-stock, dps-traintools and dps-transitapp. |
+| [dps-transitapp](https://github.com/DaemonAlex/dps-transitapp) | Live train arrival boards on the lb-phone. |
+| [dps-faceplant](https://github.com/DaemonAlex/dps-faceplant) | City help, reports and staff tools on the lb-phone and lb-tablet. |
+| [dps-chat](https://github.com/DaemonAlex/dps-chat) | A command box for voice-only servers. No chat feed. |
+| [dps-filmmode](https://github.com/DaemonAlex/dps-filmmode) | One key hides every HUD layer and gives a smooth free camera for recording. |
